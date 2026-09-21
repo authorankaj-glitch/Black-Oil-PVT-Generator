@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black-Oil PVT Generator</title>
+<meta name="description" content="Interactive black-oil PVT correlation generator for oil, gas and formation water, with simulator-ready export.">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Black-Oil PVT Generator</h1>
+    <span>Industry-standard correlations for oil, gas and formation water &mdash; with simulator-ready export</span>
+  </div>
+  <div class="topbar-actions">
+    <div class="seg" role="group" aria-label="Unit system">
+      <button type="button" id="unitField" aria-pressed="true">Field</button>
+      <button type="button" id="unitMetric" aria-pressed="false">Metric</button>
+    </div>
+    <button type="button" id="themeToggle" class="ghost" aria-label="Switch colour theme">Theme</button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ------------------------------------------------ inputs ------ -->
+  <form class="panel sidebar" id="inputs" autocomplete="off">
+    <fieldset>
+      <legend>Fluid preset</legend>
+      <div class="field wide">
+        <select id="preset" aria-label="Fluid preset">
+          <option value="">Custom</option>
+          <option value="light">Light oil &mdash; 38 API, 900 scf/STB</option>
+          <option value="medium" selected>Medium oil &mdash; 35 API, 600 scf/STB</option>
+          <option value="heavy">Heavy oil &mdash; 18 API, 120 scf/STB</option>
+          <option value="volatile">Volatile oil &mdash; 45 API, 1800 scf/STB</option>
+          <option value="sour">Sour medium oil &mdash; 30 API, 8% H2S</option>
+          <option value="northsea">North Sea oil &mdash; 36 API, 700 scf/STB</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Reservoir fluid</legend>
+      <div class="field"><label for="api">Stock-tank oil gravity <span class="unit">&deg;API</span></label><input type="number" id="api" step="0.1" value="35"></div>
+      <div class="field"><label for="gammaG">Solution gas gravity <span class="unit">air = 1</span></label><input type="number" id="gammaG" step="0.01" value="0.75"></div>
+      <div class="field"><label for="tempF">Reservoir temperature <span class="unit" data-unit="T">&deg;F</span></label><input type="number" id="tempF" step="1" value="180"></div>
+      <div class="field"><label for="spec">Saturation specified by</label>
+        <select id="spec"><option value="rsb" selected>Rsb</option><option value="pb">Pb</option></select></div>
+      <div class="field" id="rowRsb"><label for="rsb">Solution GOR at Pb <span class="unit" data-unit="rs">scf/STB</span></label><input type="number" id="rsb" step="10" value="600"></div>
+      <div class="field" id="rowPb" hidden><label for="pbMeas">Bubble-point pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pbMeas" step="50" value="2500"></div>
+      <div class="field"><label for="pSepPsia">Separator pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pSepPsia" step="5" value="114.7"></div>
+      <div class="field"><label for="tSepF">Separator temperature <span class="unit" data-unit="T">&deg;F</span></label><input type="number" id="tSepF" step="1" value="80"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Gas composition</legend>
+      <div class="field wide"><label for="gasType">Gas system</label>
+        <select id="gasType"><option value="dry" selected>Dry / associated</option><option value="wet">Wet / condensate</option></select></div>
+      <div class="field"><label for="yCO2">CO<sub>2</sub> <span class="unit">mol %</span></label><input type="number" id="yCO2" step="0.1" value="0"></div>
+      <div class="field"><label for="yH2S">H<sub>2</sub>S <span class="unit">mol %</span></label><input type="number" id="yH2S" step="0.1" value="0"></div>
+      <div class="field"><label for="yN2">N<sub>2</sub> <span class="unit">mol %</span></label><input type="number" id="yN2" step="0.1" value="0"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Water and rock</legend>
+      <div class="field"><label for="salinity">Brine salinity <span class="unit">wt % NaCl</span></label><input type="number" id="salinity" step="0.5" value="3"></div>
+      <div class="field"><label for="pRefRock">Rock reference pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pRefRock" step="100" value="4000"></div>
+      <div class="field"><label for="rockComp">Rock compressibility <span class="unit" data-unit="c">1/psi</span></label><input type="number" id="rockComp" step="1e-6" value="4e-6"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Table range</legend>
+      <div class="field"><label for="pMin">Minimum pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pMin" step="10" value="100"></div>
+      <div class="field"><label for="pMax">Maximum pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pMax" step="100" value="6000"></div>
+      <div class="field"><label for="nSat">Saturated nodes</label><input type="number" id="nSat" step="1" min="4" max="60" value="15"></div>
+      <div class="field"><label for="nUnsat">Undersaturated nodes</label><input type="number" id="nUnsat" step="1" min="1" max="30" value="6"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Oil correlations</legend>
+      <div class="field wide"><label for="cPb">Bubble point / solution GOR</label>
+        <select id="cPb">
+          <option value="standing" selected>Standing (1947)</option>
+          <option value="vasquezBeggs">Vasquez &amp; Beggs (1980)</option>
+          <option value="glaso">Glaso (1980) &mdash; North Sea</option>
+          <option value="alMarhoun">Al-Marhoun (1988) &mdash; Middle East</option>
+          <option value="petroskyFarshad">Petrosky &amp; Farshad (1993) &mdash; GoM</option>
+          <option value="lasater">Lasater (1958)</option>
+        </select></div>
+      <div class="field wide"><label for="cBo">Oil FVF (saturated)</label>
+        <select id="cBo">
+          <option value="standing" selected>Standing (1947)</option>
+          <option value="vasquezBeggs">Vasquez &amp; Beggs (1980)</option>
+          <option value="glaso">Glaso (1980)</option>
+          <option value="alMarhoun">Al-Marhoun (1988)</option>
+          <option value="petroskyFarshad">Petrosky &amp; Farshad (1993)</option>
+        </select></div>
+      <div class="field wide"><label for="cCo">Undersaturated compressibility</label>
+        <select id="cCo">
+          <option value="vasquezBeggs" selected>Vasquez &amp; Beggs (1980)</option>
+          <option value="petroskyFarshad">Petrosky &amp; Farshad (1993)</option>
+          <option value="mccain">McCain et al. (1988)</option>
+        </select></div>
+      <div class="field wide"><label for="cMuod">Dead-oil viscosity</label>
+        <select id="cMuod">
+          <option value="beggsRobinson" selected>Beggs &amp; Robinson (1975)</option>
+          <option value="beal">Beal (1946)</option>
+          <option value="glaso">Glaso (1980)</option>
+          <option value="ngEgbogah">Ng &amp; Egbogah (1983)</option>
+        </select></div>
+      <div class="field wide"><label for="cMuob">Saturated oil viscosity</label>
+        <select id="cMuob">
+          <option value="beggsRobinson" selected>Beggs &amp; Robinson (1975)</option>
+          <option value="chewConnally">Chew &amp; Connally (1959)</option>
+        </select></div>
+      <div class="field wide"><label for="cMuou">Undersaturated oil viscosity</label>
+        <select id="cMuou">
+          <option value="vasquezBeggs" selected>Vasquez &amp; Beggs (1980)</option>
+          <option value="petroskyFarshad">Petrosky &amp; Farshad (1993)</option>
+          <option value="none">Constant above Pb</option>
+        </select></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Gas correlations</legend>
+      <div class="field wide"><label for="cPcrit">Pseudo-critical properties</label>
+        <select id="cPcrit"><option value="sutton" selected>Sutton (1985)</option><option value="standing">Standing (1977)</option></select></div>
+      <div class="field wide"><label for="cInert">Non-hydrocarbon correction</label>
+        <select id="cInert"><option value="wichertAziz" selected>Wichert &amp; Aziz (1972)</option><option value="carr">Carr, Kobayashi &amp; Burrows (1954)</option></select></div>
+      <div class="field wide"><label for="cZ">z-factor</label>
+        <select id="cZ">
+          <option value="dak" selected>Dranchuk &amp; Abou-Kassem (1975)</option>
+          <option value="hallYarborough">Hall &amp; Yarborough (1973)</option>
+          <option value="beggsBrill">Beggs &amp; Brill (1973)</option>
+        </select></div>
+      <div class="field wide"><label for="cMug">Gas viscosity</label>
+        <select id="cMug">
+          <option value="leeGonzalezEakin" selected>Lee, Gonzalez &amp; Eakin (1966)</option>
+          <option value="carrKobayashiBurrows">Carr, Kobayashi &amp; Burrows (1954)</option>
+        </select></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Laboratory calibration <span class="unit">optional</span></legend>
+      <p class="hint">Enter measured PVT data to anchor the correlations. Leave blank to use them unadjusted.</p>
+      <div class="field"><label for="calPb">Measured Pb <span class="unit" data-unit="p">psia</span></label><input type="number" id="calPb" step="10" placeholder="&mdash;"></div>
+      <div class="field"><label for="calBob">Measured Bo at Pb <span class="unit" data-unit="bo">bbl/STB</span></label><input type="number" id="calBob" step="0.01" placeholder="&mdash;"></div>
+      <div class="field"><label for="calMuod">Measured dead-oil &mu; <span class="unit">cp</span></label><input type="number" id="calMuod" step="0.1" placeholder="&mdash;"></div>
+    </fieldset>
+
+    <div class="export-bar" style="margin-top:14px">
+      <button type="button" id="btnReset" class="ghost">Reset defaults</button>
+      <button type="button" id="btnShare" class="ghost">Copy link to this case</button>
+    </div>
+  </form>
+
+  <!-- ------------------------------------------------ results ----- -->
+  <main>
+    <div class="tabs" role="tablist" aria-label="Results">
+      <button type="button" role="tab" id="tab-summary" aria-controls="panel-summary" aria-selected="true">Summary</button>
+      <button type="button" role="tab" id="tab-charts" aria-controls="panel-charts" aria-selected="false">Charts</button>
+      <button type="button" role="tab" id="tab-tables" aria-controls="panel-tables" aria-selected="false">Tables</button>
+      <button type="button" role="tab" id="tab-compare" aria-controls="panel-compare" aria-selected="false">Correlation spread</button>
+      <button type="button" role="tab" id="tab-export" aria-controls="panel-export" aria-selected="false">Export</button>
+      <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false">Method</button>
+    </div>
+
+    <div id="errorBox" hidden></div>
+
+    <section id="panel-summary" role="tabpanel" aria-labelledby="tab-summary">
+      <div class="tiles" id="tiles"></div>
+      <div id="qc"></div>
+      <div class="chart-grid" id="summaryCharts"></div>
+    </section>
+
+    <section id="panel-charts" role="tabpanel" aria-labelledby="tab-charts" hidden>
+      <div class="chart-grid" id="allCharts"></div>
+    </section>
+
+    <section id="panel-tables" role="tabpanel" aria-labelledby="tab-tables" hidden>
+      <div class="export-bar">
+        <div class="field"><label for="tableSel">Table</label>
+          <select id="tableSel">
+            <option value="oil" selected>Oil properties</option>
+            <option value="gas">Gas properties</option>
+            <option value="water">Water properties</option>
+            <option value="pvto">PVTO records (live oil)</option>
+          </select></div>
+      </div>
+      <div class="table-wrap"><table id="dataTable"></table></div>
+    </section>
+
+    <section id="panel-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
+      <p class="hint">Every correlation in the library, evaluated on the current fluid. The spread is the honest uncertainty band when no laboratory data is available.</p>
+      <div class="chart-grid" id="compareCharts"></div>
+      <div class="table-wrap" style="margin-top:14px"><table id="compareTable"></table></div>
+    </section>
+
+    <section id="panel-export" role="tabpanel" aria-labelledby="tab-export" hidden>
+      <div class="export-bar">
+        <div class="field"><label for="fmtSel">Format</label>
+          <select id="fmtSel">
+            <option value="eclipse" selected>ECLIPSE / OPM Flow / tNavigator (.INC)</option>
+            <option value="cmg">CMG IMEX / GEM (.dat)</option>
+            <option value="csv">CSV property table</option>
+            <option value="json">JSON model</option>
+          </select></div>
+        <div class="field"><label for="fmtUnits">Deck units</label>
+          <select id="fmtUnits"><option value="field" selected>FIELD</option><option value="metric">METRIC / SI</option></select></div>
+        <button type="button" class="primary" id="btnDownload">Download</button>
+        <button type="button" id="btnCopy">Copy to clipboard</button>
+        <span id="copyStatus" class="hint" role="status"></span>
+      </div>
+      <pre class="preview" id="exportPreview" tabindex="0"></pre>
+    </section>
+
+    <section id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
+      <div class="panel">
+        <h2 style="font-size:16px">What this tool does</h2>
+        <p class="hint">It builds a consistent black-oil PVT model from routine field inputs &mdash; stock-tank oil gravity, separator gas gravity, reservoir temperature and either the solution GOR or the bubble-point pressure &mdash; and writes it out in the formats reservoir simulators read.</p>
+        <h3 style="margin-top:14px">Calculation sequence</h3>
+        <ol class="hint" style="padding-left:18px">
+          <li>P<sub>b</sub> from R<sub>sb</sub> (or R<sub>sb</sub> back-solved from a measured P<sub>b</sub>).</li>
+          <li>R<sub>s</sub>(p) below P<sub>b</sub> by numerical inversion of the same P<sub>b</sub> equation, so R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub> exactly.</li>
+          <li>B<sub>o</sub> and &mu;<sub>o</sub> on the saturated branch from R<sub>s</sub>(p).</li>
+          <li>Above P<sub>b</sub>: B<sub>o</sub> = B<sub>ob</sub>&middot;exp(&minus;&int;c<sub>o</sub>dp), integrated with the trapezoid rule, and &mu;<sub>o</sub> from the undersaturated correlation.</li>
+          <li>Gas: pseudo-criticals &rarr; non-hydrocarbon correction &rarr; z &rarr; B<sub>g</sub>, &rho;<sub>g</sub>, c<sub>g</sub>, &mu;<sub>g</sub>.</li>
+          <li>Water: McCain (1991) B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) c<sub>w</sub>.</li>
+          <li>Each PVTO record carries its own saturation pressure and undersaturated branch, which is what ECLIPSE expects for live oil.</li>
+        </ol>
+        <h3 style="margin-top:14px">Limitations worth stating in a report</h3>
+        <ul class="hint" style="padding-left:18px">
+          <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
+          <li>The gas table is a dry-gas PVDG: no vaporised oil (R<sub>v</sub>). For a gas condensate or a volatile oil, use a compositional or modified black-oil model.</li>
+          <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
+          <li>Calibration stretches the correlation to honour measured P<sub>b</sub> and B<sub>ob</sub>; it does not replace a laboratory CCE/DL study.</li>
+        </ul>
+        <h3 style="margin-top:14px">References</h3>
+        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="foot">
+  Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.
+</footer>
+
+<script src="js/correlations.js"></script>
+<script src="js/pvt-model.js"></script>
+<script src="js/export.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

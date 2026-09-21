@@ -1,4 +1,17 @@
-# Scientific Calculator
+# P1-Calculator
+
+Engineering calculation tools.
+
+- **[Black-Oil PVT Generator](pvt/)** — an interactive web page that builds
+  black-oil PVT tables for oil, gas and formation water from industry-standard
+  correlations and exports them for ECLIPSE/OPM Flow, CMG IMEX, or as CSV/JSON.
+  Open `pvt/index.html` in a browser; see [pvt/README.md](pvt/README.md).
+- **Scientific Calculator** — a Python scientific calculator with CLI and GUI
+  interfaces (below).
+
+---
+
+## Scientific Calculator
 
 A feature-rich scientific calculator built with Python featuring both CLI and GUI interfaces.
 
