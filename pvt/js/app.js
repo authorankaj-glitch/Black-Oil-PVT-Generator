@@ -9,6 +9,7 @@
   'use strict';
 
   var C = window.PVTCorr, Model = window.PVTModel, Exp = window.PVTExport, Chart = window.PVTChart;
+  var FS = window.PVTFluidState, Vis = window.PVTVisuals;
   var $ = function (id) { return document.getElementById(id); };
 
   /* ---------------- unit handling ---------------- */
@@ -133,6 +134,7 @@
 
   /* ---------------- rendering ---------------- */
   var model = null, charts = {};
+  var barrel = null, phase = null, envelope = null, cursorP = null, playTimer = null;
 
   function tile(parent, label, value, unit, hero) {
     var d = document.createElement('div');
@@ -229,6 +231,7 @@
       marker: { x: conv('p', model.pb), label: 'Pb' },
       yMinZero: def.yMinZero,
       endLabels: false,
+      onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
       fmtX: function (v) { return v.toFixed(uu('p').d); },
       fmtY: function (v) {
         var d = def.kind ? uu(def.kind).d : 4;
@@ -244,6 +247,86 @@
       if (def.key === 'rs' || def.key === 'bo') chartInto(sum, 's_' + def.key, chartOpts(def));
       chartInto(all, def.key, chartOpts(def));
     });
+  }
+
+  /* ---------------- cursor-linked fluid visuals ---------------- */
+  function pRange() {
+    return { lo: model.oil[0].p, hi: model.oil[model.oil.length - 1].p };
+  }
+
+  /* One pressure drives the barrel, the phase diagram, the slider and the
+     readout, wherever the pointer happens to be. */
+  function setCursor(p, source) {
+    if (!model) return;
+    var r = pRange();
+    cursorP = Math.max(r.lo, Math.min(r.hi, p));
+    if (barrel) barrel.update(cursorP);
+    if (phase) phase.update(cursorP);
+    var slider = $('pCursor');
+    if (source !== 'slider') slider.value = String(conv('p', cursorP));
+    $('cursorReadout').textContent = fmt('p', cursorP) + ' ' + label('p');
+    var st = $('cursorState');
+    var twoPhase = cursorP <= model.pb + 1e-6;
+    var atPb = Math.abs(cursorP - model.pb) < 0.004 * model.pb;
+    st.textContent = atPb ? 'At the bubble point'
+      : (twoPhase ? 'Two-phase: oil + free gas' : 'Single-phase undersaturated oil');
+    st.className = 'state-chip' + (twoPhase && !atPb ? ' two-phase' : '');
+  }
+
+  function renderVisuals() {
+    envelope = FS.phaseEnvelope(model);
+    var r = pRange();
+    var host = $('fluidVisuals');
+    host.textContent = '';
+
+    var slider = $('pCursor');
+    slider.min = String(conv('p', r.lo));
+    slider.max = String(conv('p', r.hi));
+    slider.step = String((conv('p', r.hi) - conv('p', r.lo)) / 600);
+
+    var state = function (p) { return FS.barrelState(model, p); };
+    var atPb = function (p) { return Math.abs(p - model.pb) < 0.004 * model.pb; };
+    var bHost = document.createElement('div');
+    host.appendChild(bHost);
+    barrel = Vis.createBarrel(bHost, { state: state, fmt: fmt, label: label, atBubblePoint: atPb });
+
+    var pHost = document.createElement('div');
+    host.appendChild(pHost);
+    phase = Vis.createPhaseDiagram(pHost, {
+      env: envelope, state: state, fmt: fmt, label: label, atBubblePoint: atPb,
+      convT: function (t) { return conv('T', t); },
+      convP: function (p) { return conv('p', p); },
+      invP: function (v) { return uu('p').inv(v); },
+      /* a temperature difference converts by the scale factor alone */
+      convDeltaT: function (d) { return units === 'metric' ? d / 1.8 : d; },
+      ticks: Chart.niceTicks, fmtTick: Chart.fmtTick,
+      pMinTable: r.lo, pMaxTable: r.hi,
+      onPressure: function (p) { setCursor(p, 'phase'); }
+    });
+
+    var keep = cursorP !== null && cursorP >= r.lo && cursorP <= r.hi ? cursorP : model.pb;
+    setCursor(keep);
+  }
+
+  function togglePlay() {
+    var btn = $('btnPlay');
+    if (playTimer) {
+      cancelAnimationFrame(playTimer);
+      playTimer = null;
+      btn.textContent = 'Play depletion';
+      btn.classList.remove('primary');
+      return;
+    }
+    btn.textContent = 'Stop';
+    btn.classList.add('primary');
+    var r = pRange(), t0 = null, span = 9000;
+    var step = function (ts) {
+      if (t0 === null) t0 = ts;
+      var f = ((ts - t0) % span) / span;           /* 1 -> 0, then repeat */
+      setCursor(r.hi - f * (r.hi - r.lo));
+      playTimer = requestAnimationFrame(step);
+    };
+    playTimer = requestAnimationFrame(step);
   }
 
   /* ---------------- tables ---------------- */
@@ -375,6 +458,7 @@
       xLabel: 'Pressure (' + label('p') + ')', yLabel: label('rs'), xUnit: label('p'),
       series: rsSeries, marker: { x: conv('p', model.pb), label: 'Pb (selected)' },
       yMinZero: true,
+      onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
       fmtX: function (v) { return v.toFixed(uu('p').d); },
       fmtY: function (v) { return v.toFixed(uu('rs').d); }
     });
@@ -534,6 +618,7 @@
     }
     renderSummary();
     renderCharts();
+    renderVisuals();
     renderTable();
     renderCompare();
     renderExport();
@@ -653,6 +738,10 @@
       schedule();
     });
 
+    $('pCursor').addEventListener('input', function (ev) {
+      setCursor(uu('p').inv(parseFloat(ev.target.value)), 'slider');
+    });
+    $('btnPlay').addEventListener('click', togglePlay);
     $('tableSel').addEventListener('change', renderTable);
     $('fmtSel').addEventListener('change', renderExport);
     $('fmtUnits').addEventListener('change', renderExport);
