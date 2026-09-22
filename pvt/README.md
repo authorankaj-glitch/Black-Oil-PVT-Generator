@@ -5,7 +5,7 @@ model from routine field inputs and exports it in the formats reservoir
 simulators read.
 
 Use it at
-**[authorankaj-glitch.github.io/P1-Calculator/pvt/](https://authorankaj-glitch.github.io/P1-Calculator/pvt/)**,
+**[authorankaj-glitch.github.io/PVT-Correlation-Generator/pvt/](https://authorankaj-glitch.github.io/PVT-Correlation-Generator/pvt/)**,
 or open `pvt/index.html` from a local clone — no build step, no server, no
 network access. Everything runs in the browser, including on the hosted copy:
 nothing you type is uploaded anywhere, which matters when the fluid data is
