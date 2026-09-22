@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P1-Calculator</title>
+<meta name="description" content="Engineering calculation tools: a black-oil PVT correlation generator and a scientific calculator.">
+<link rel="stylesheet" href="pvt/css/app.css">
+<style>
+  .home { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+  .home h1 { font-size: 30px; letter-spacing: -0.02em; }
+  .home > p.lede { color: var(--text-secondary); margin-top: 8px; font-size: 16px; }
+  .cards { display: grid; gap: 14px; margin-top: 28px; }
+  .card {
+    display: block; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px; text-decoration: none; color: inherit;
+  }
+  a.card:hover { border-color: var(--accent); }
+  .card h2 { font-size: 17px; }
+  .card p { color: var(--text-secondary); font-size: 14px; margin-top: 6px; }
+  .card code {
+    font-family: var(--mono); font-size: 13px; background: var(--surface-2);
+    padding: 2px 6px; border-radius: 5px;
+  }
+  .tag {
+    display: inline-block; font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--text-muted); margin-bottom: 4px;
+  }
+  .home footer { margin-top: 32px; color: var(--text-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main class="home">
+  <h1>P1-Calculator</h1>
+  <p class="lede">Engineering calculation tools.</p>
+
+  <div class="cards">
+    <a class="card" href="pvt/">
+      <span class="tag">Runs in your browser</span>
+      <h2>Black-Oil PVT Generator &rarr;</h2>
+      <p>
+        Builds black-oil PVT tables for oil, gas and formation water from industry-standard
+        correlations, with cursor-linked fluid visuals and export for ECLIPSE / OPM Flow,
+        CMG IMEX, CSV and JSON. No build step, no network calls &mdash; everything is
+        computed locally in the page.
+      </p>
+    </a>
+
+    <div class="card">
+      <span class="tag">Python, command line or GUI</span>
+      <h2>Scientific Calculator</h2>
+      <p>
+        Expression evaluation, scientific functions, constants, memory and history.
+        Clone the repository and run <code>python3 scientific_calculator.py gui</code>
+        for the graphical interface, or omit <code>gui</code> for the CLI.
+      </p>
+    </div>
+  </div>
+
+  <footer>
+    Source and documentation on
+    <a href="https://github.com/authorankaj-glitch/P1-Calculator">GitHub</a>.
+  </footer>
+</main>
+</body>
+</html>
