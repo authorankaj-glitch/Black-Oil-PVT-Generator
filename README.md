@@ -93,3 +93,8 @@ To run the same checks locally:
 ```bash
 node pvt/tests/run-tests.js
 ```
+
+## License
+
+[MIT](LICENSE). The PVT correlations themselves are published science, cited in
+[pvt/README.md](pvt/README.md); this license covers the implementation.
