@@ -66,6 +66,63 @@ failing silently.
 McCain (1991) for B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) for c<sub>w</sub>,
 with salinity entered as weight-percent NaCl equivalent.
 
+## Cursor-linked fluid visuals
+
+Two pictures on the Summary tab share one pressure cursor with every chart on
+the page. Hover any curve, drag the slider, drag the phase diagram itself, or
+press **Play depletion** to sweep from the maximum table pressure down to the
+minimum &mdash; all four inputs drive the same state.
+
+### The barrel
+
+One stock-tank barrel of oil plus its solution gas, held at the cursor pressure
+&mdash; a constant-composition expansion:
+
+* **liquid volume** = B<sub>o</sub>(p) bbl per STB;
+* **free gas volume** = [R<sub>sb</sub> &minus; R<sub>s</sub>(p)] &middot;
+  B<sub>g</sub>(p) / 5.614583 bbl per STB;
+* the split drawn in the barrel is the volume fraction of each phase, and the
+  readout gives both volumes, the total cell volume and V/V<sub>b</sub>.
+
+Dissolved gas is drawn as specks inside the liquid whose density tracks
+R<sub>s</sub>/R<sub>sb</sub>; evolved gas is the growing cap, with bubbles
+rising through the liquid in proportion to how much gas has come out of
+solution. Above P<sub>b</sub> the cap is empty and the specks are at full
+density &mdash; every scf is still dissolved. The animation is suppressed under
+`prefers-reduced-motion`.
+
+### The phase envelope
+
+A pressure-temperature envelope with the bubble-point line, the dew-point line,
+the critical point, iso-liquid-volume (quality) lines, and the reservoir
+isotherm the fluid actually depletes along. The cursor rides that isotherm, and
+its callout reports the phase state and the liquid volume percent taken from the
+black-oil calculation itself.
+
+**This envelope is schematic, and the page says so.** A true envelope requires a
+compositional EOS. What the tool has is one hard point &mdash; the computed
+(T<sub>res</sub>, P<sub>b</sub>) &mdash; plus the fluid's volatility. The
+construction is:
+
+1. A volatility index from R<sub>sb</sub> and API gravity sets how far the
+   critical temperature sits above the reservoir temperature: from about 340 &deg;F
+   for a heavy, low-GOR crude down to 20 &deg;F for a near-critical fluid. That
+   distance is what visually distinguishes a black oil from a volatile one.
+2. The bubble branch is
+   P(T) = P<sub>c</sub> &minus; (P<sub>c</sub> &minus; P<sub>0</sub>)
+   &middot;[(T<sub>c</sub> &minus; T)/(T<sub>c</sub> &minus; T<sub>0</sub>)]<sup>1.8</sup>,
+   which starts at standard conditions and flattens into the critical point.
+3. P<sub>c</sub> then follows in closed form from the requirement
+   P(T<sub>res</sub>) = P<sub>b</sub>, so the envelope passes through the
+   calculated bubble point exactly.
+4. The dew branch runs from the critical point out past the cricondentherm and
+   back down; quality lines are blends of the two branches, fanned from the
+   critical point.
+
+Read it as a teaching diagram and a fluid-type classifier, not as a measured
+envelope: the bubble point it passes through is real, the shape around it is
+not.
+
 ## Calculation sequence
 
 1. **P<sub>b</sub>** from R<sub>sb</sub>, or R<sub>sb</sub> back-solved from a
@@ -137,7 +194,9 @@ pvt/
   js/pvt-model.js       model assembly: grids, branches, calibration, QC
   js/export.js          ECLIPSE / CMG / CSV / JSON writers
   js/charts.js          SVG charts with crosshair, tooltip and keyboard access
-  js/app.js             UI wiring, unit system, presets, persistence
+  js/fluid-state.js     cursor-pressure fluid state and the schematic P-T envelope
+  js/visuals.js         the barrel and the phase diagram
+  js/app.js             UI wiring, unit system, presets, persistence, cursor bus
   tests/run-tests.js    regression tests
 ```
 
@@ -158,11 +217,14 @@ console.log(Exp.eclipse(m, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-117 checks covering reference values for each correlation, the physical
+140 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
-for every export format, and a sweep of 849 fluid/correlation combinations.
+for every export format, a sweep of 849 fluid/correlation combinations, the
+barrel volume balance (no free gas at P<sub>b</sub>, fractions summing to one,
+monotonic gas evolution below P<sub>b</sub>) and the phase-envelope anchoring for
+every preset fluid.
 
 ## Limitations
 
@@ -172,6 +234,8 @@ for every export format, and a sweep of 849 fluid/correlation combinations.
 * The gas table is a dry-gas `PVDG`: no vaporised oil (R<sub>v</sub>). Gas
   condensates and volatile oils need a compositional or modified black-oil model.
 * Water is treated as undersaturated (no dissolved gas), matching `PVTW`.
+* The phase envelope is schematic (see above). Only the bubble point it passes
+  through is calculated; the rest of the shape is constructed.
 * Surface conditions are 14.696 psia and 60 °F. Metric output uses the
   conventional volume-ratio conversions and does not re-reference to 15 °C.
 

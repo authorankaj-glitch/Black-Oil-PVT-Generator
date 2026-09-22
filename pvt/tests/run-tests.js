@@ -11,6 +11,7 @@
 var C = require('../js/correlations.js');
 var M = require('../js/pvt-model.js');
 var E = require('../js/export.js');
+var FS = require('../js/fluid-state.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -296,6 +297,112 @@ var swept = 0, refused = 0, bad = [];
 ok(swept + ' fluid/correlation combinations produce finite, positive properties (' +
    refused + ' refused with a non-physical bubble point)',
    bad.length === 0, bad.slice(0, 5).join(' | '));
+
+section('13. Cursor-linked fluid state (barrel)');
+var fm = M.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMin: 100, pMax: 6000, nSat: 15, nUnsat: 6 });
+near('table lookup is exact at a node', FS.interp(fm.oil, fm.pb, 'bo'), fm.bob, 1e-9);
+ok('table lookup clamps outside the range',
+   FS.interp(fm.oil, 1e9, 'rs') === fm.rsb && FS.interp(fm.oil, -5, 'rs') === fm.oil[0].rs);
+var atPb = FS.barrelState(fm, fm.pb);
+near('no free gas at the bubble point', atPb.freeGasScf, 0, 1e-6);
+near('the cell is all liquid at the bubble point', atPb.liquidFrac, 1, 1e-9);
+near('V/Vb is 1 at the bubble point', atPb.relVol, 1, 1e-9);
+ok('above Pb nothing comes out of solution', (function () {
+  for (var p = fm.pb + 50; p <= 6000; p += 250) {
+    var s = FS.barrelState(fm, p);
+    if (s.freeGasScf > 1e-9 || Math.abs(s.liquidFrac - 1) > 1e-9) return false;
+  }
+  return true;
+})());
+ok('below Pb the gas fraction grows as pressure falls', (function () {
+  var prev = -1;
+  for (var p = fm.pb; p >= 100; p -= 100) {
+    var g = FS.barrelState(fm, p).gasFrac;
+    if (g < prev - 1e-12) return false;
+    prev = g;
+  }
+  return prev > 0.8;
+})());
+ok('below Pb the cell expands as pressure falls', (function () {
+  var prev = 0;
+  for (var p = fm.pb; p >= 100; p -= 100) {
+    var v = FS.barrelState(fm, p).totalRb;
+    if (v < prev - 1e-9) return false;
+    prev = v;
+  }
+  return prev > FS.barrelState(fm, fm.pb).totalRb;
+})());
+ok('dissolved fraction falls monotonically with pressure', (function () {
+  var prev = 2;
+  for (var p = fm.pb; p >= 100; p -= 100) {
+    var d = FS.barrelState(fm, p).dissolvedFrac;
+    if (d > prev + 1e-12) return false;
+    prev = d;
+  }
+  return prev < 0.1;
+})());
+ok('liquid and gas fractions sum to one', (function () {
+  for (var p = 100; p <= 6000; p += 137) {
+    var s = FS.barrelState(fm, p);
+    if (Math.abs(s.liquidFrac + s.gasFrac - 1) > 1e-12) return false;
+  }
+  return true;
+})());
+ok('free gas volume equals the evolved gas times Bg', (function () {
+  var s = FS.barrelState(fm, 1000);
+  var bg = FS.interp(fm.gas, 1000, 'bg');
+  return Math.abs(s.freeGasRb - s.freeGasScf * bg / 5.614583) < 1e-12;
+})());
+
+section('14. Schematic phase envelope');
+var env = FS.phaseEnvelope(fm);
+near('the bubble branch passes through the computed bubble point',
+     env.bubbleAt(fm.input.tempF), fm.pb, 1e-9);
+ok('the critical point sits above and right of the bubble point',
+   env.pc > fm.pb && env.tc > fm.input.tempF, env.pc + ' / ' + env.tc);
+ok('the bubble branch rises monotonically with temperature', (function () {
+  for (var i = 1; i < env.bubble.length; i++) {
+    if (env.bubble[i].p <= env.bubble[i - 1].p) return false;
+  }
+  return true;
+})());
+ok('the bubble branch starts at standard conditions and ends at the critical point',
+   Math.abs(env.bubble[0].t - 60) < 1e-9 && Math.abs(env.bubble[0].p - 14.696) < 1e-6 &&
+   Math.abs(env.bubble[env.bubble.length - 1].t - env.tc) < 1e-6 &&
+   Math.abs(env.bubble[env.bubble.length - 1].p - env.pc) < 1e-6);
+ok('the dew branch starts at the critical point and turns back to low pressure',
+   Math.abs(env.dew[0].t - env.tc) < 1e-6 &&
+   env.dew[env.dew.length - 1].p < 0.05 * env.pc);
+ok('the cricondentherm lies beyond the critical temperature', env.tMax > env.tc);
+ok('quality lines fan out from the critical point', env.quality.every(function (q) {
+  return Math.abs(q.points[0].t - env.tc) < 1e-6 && Math.abs(q.points[0].p - env.pc) < 1e-6;
+}));
+ok('quality lines are ordered between the two branches', (function () {
+  var k = 20, a = env.quality[0].points[k], b = env.quality[1].points[k], c = env.quality[2].points[k];
+  return a.t < b.t && b.t < c.t;    /* 75% closest to the bubble line */
+})());
+ok('a heavier, lower-GOR fluid sits further from its critical point', (function () {
+  var heavy = FS.phaseEnvelope(M.build({ api: 18, gammaG: 0.65, rsb: 120, tempF: 130, pMin: 50, pMax: 3000 }));
+  var vol = FS.phaseEnvelope(M.build({ api: 45, gammaG: 0.85, rsb: 1800, tempF: 250, pMin: 200, pMax: 8000, corr: { pb: 'glaso' } }));
+  return heavy.dT > vol.dT && heavy.fluidType === 'black oil' && vol.fluidType !== 'black oil';
+})());
+ok('the envelope is anchored for every preset fluid', (function () {
+  var cases = [
+    { api: 38, gammaG: 0.72, rsb: 900, tempF: 200, pMax: 6500 },
+    { api: 18, gammaG: 0.65, rsb: 120, tempF: 130, pMin: 50, pMax: 3000 },
+    { api: 45, gammaG: 0.85, rsb: 1800, tempF: 250, pMin: 200, pMax: 8000 },
+    { api: 30, gammaG: 0.88, rsb: 500, tempF: 210, pMax: 5500, yH2S: 0.08, yCO2: 0.04 }
+  ];
+  return cases.every(function (c) {
+    var mm = M.build(c), ee = FS.phaseEnvelope(mm);
+    return Math.abs(ee.bubbleAt(c.tempF) - mm.pb) / mm.pb < 1e-9 && ee.pc > mm.pb && isFinite(ee.tMax);
+  });
+})());
+var st = FS.stateAt(env, fm, fm.pb + 500);
+ok('state above Pb reports a single liquid phase',
+   st.phase === 'Single-phase liquid' && Math.abs(st.liquidFrac - 1) < 1e-9);
+ok('state below Pb reports two phases',
+   FS.stateAt(env, fm, fm.pb - 500).phase === 'Two-phase');
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

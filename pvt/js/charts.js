@@ -263,6 +263,8 @@
       if (left + 190 > w) left = sx(px) - 190;
       self.tip.style.left = Math.max(4, left) + 'px';
       self.tip.style.top = (M.top + 6) + 'px';
+      /* broadcast the hovered x so cursor-linked visuals follow the pointer */
+      if (o.onCursor) o.onCursor(px);
     }
     function hide() {
       self.tip.hidden = true;
@@ -300,6 +302,6 @@
 
   return {
     create: function (container, opts) { return new Chart(container, opts); },
-    fmtNum: fmtNum, fmtTick: fmtTick
+    fmtNum: fmtNum, fmtTick: fmtTick, niceTicks: niceTicks
   };
 });

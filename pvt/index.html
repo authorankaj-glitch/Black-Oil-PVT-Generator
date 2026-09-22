@@ -171,7 +171,18 @@
     <section id="panel-summary" role="tabpanel" aria-labelledby="tab-summary">
       <div class="tiles" id="tiles"></div>
       <div id="qc"></div>
-      <div class="chart-grid" id="summaryCharts"></div>
+
+      <div class="cursor-bar">
+        <label for="pCursor">Cursor pressure</label>
+        <input type="range" id="pCursor" min="0" max="100" step="0.1" value="50"
+               aria-describedby="cursorReadout">
+        <output id="cursorReadout" for="pCursor"></output>
+        <span class="state-chip" id="cursorState"></span>
+        <button type="button" id="btnPlay">Play depletion</button>
+      </div>
+      <p class="hint">Hover any curve on this page &mdash; or drag the slider or the phase diagram &mdash; and both pictures below follow the same pressure.</p>
+      <div class="chart-grid" id="fluidVisuals"></div>
+      <div class="chart-grid" id="summaryCharts" style="margin-top:14px"></div>
     </section>
 
     <section id="panel-charts" role="tabpanel" aria-labelledby="tab-charts" hidden>
@@ -229,12 +240,20 @@
           <li>Water: McCain (1991) B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) c<sub>w</sub>.</li>
           <li>Each PVTO record carries its own saturation pressure and undersaturated branch, which is what ECLIPSE expects for live oil.</li>
         </ol>
+        <h3 style="margin-top:14px">The two cursor-linked pictures</h3>
+        <p class="hint">The barrel and the phase envelope on the Summary tab share one pressure cursor with every chart on the page. Hover a curve, drag the slider, drag the phase diagram, or press Play depletion.</p>
+        <ul class="hint" style="padding-left:18px">
+          <li><strong>Barrel</strong> &mdash; one stock-tank barrel of oil plus its solution gas at the cursor pressure. Liquid volume is B<sub>o</sub>(p); free gas volume is [R<sub>sb</sub> &minus; R<sub>s</sub>(p)]&middot;B<sub>g</sub>(p)/5.614583. Specks in the liquid are dissolved gas (density tracks R<sub>s</sub>/R<sub>sb</sub>); the cap and the rising bubbles are gas that has come out of solution.</li>
+          <li><strong>Phase envelope</strong> &mdash; <em>schematic</em>. A true envelope needs a compositional EOS; this one is built to pass exactly through the calculated (T<sub>res</sub>, P<sub>b</sub>), with the critical temperature placed by a volatility index from R<sub>sb</sub> and API gravity. The bubble point is calculated; the shape around it is constructed. Use it to read the fluid type and the depletion path, not to quote a cricondentherm.</li>
+        </ul>
+
         <h3 style="margin-top:14px">Limitations worth stating in a report</h3>
         <ul class="hint" style="padding-left:18px">
           <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
           <li>The gas table is a dry-gas PVDG: no vaporised oil (R<sub>v</sub>). For a gas condensate or a volatile oil, use a compositional or modified black-oil model.</li>
           <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
           <li>Calibration stretches the correlation to honour measured P<sub>b</sub> and B<sub>ob</sub>; it does not replace a laboratory CCE/DL study.</li>
+          <li>The phase envelope is a schematic construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data.</li>
         </ul>
         <h3 style="margin-top:14px">References</h3>
         <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
@@ -251,6 +270,8 @@
 <script src="js/pvt-model.js"></script>
 <script src="js/export.js"></script>
 <script src="js/charts.js"></script>
+<script src="js/fluid-state.js"></script>
+<script src="js/visuals.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
