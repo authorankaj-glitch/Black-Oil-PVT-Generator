@@ -1,10 +1,10 @@
-# PVT Correlation Generator
+# Black-Oil PVT Generator
 
 An interactive, dependency-free black-oil PVT generator for oil, gas and
 formation water &mdash; built for field development work, with tables that go
 straight into a reservoir simulator.
 
-**Live: https://authorankaj-glitch.github.io/PVT-Correlation-Generator/**
+**Live: https://authorankaj-glitch.github.io/Black-Oil-PVT-Generator/**
 
 Or open `pvt/index.html` from a local clone. There is no build step, no server
 and no network access: everything is computed in the browser, so confidential
