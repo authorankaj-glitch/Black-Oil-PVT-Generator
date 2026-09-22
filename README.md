@@ -2,10 +2,14 @@
 
 Engineering calculation tools.
 
+**Live site: https://authorankaj-glitch.github.io/P1-Calculator/**
+
 - **[Black-Oil PVT Generator](pvt/)** — an interactive web page that builds
   black-oil PVT tables for oil, gas and formation water from industry-standard
   correlations and exports them for ECLIPSE/OPM Flow, CMG IMEX, or as CSV/JSON.
-  Open `pvt/index.html` in a browser; see [pvt/README.md](pvt/README.md).
+  Use it at
+  [authorankaj-glitch.github.io/P1-Calculator/pvt/](https://authorankaj-glitch.github.io/P1-Calculator/pvt/),
+  or open `pvt/index.html` from a local clone; see [pvt/README.md](pvt/README.md).
 - **Scientific Calculator** — a Python scientific calculator with CLI and GUI
   interfaces (below).
 
@@ -75,3 +79,17 @@ python3 scientific_calculator.py
 - **Orange accent buttons** - C (Clear) and = (Equals)
 - **Gray function buttons** - Scientific operations
 
+---
+
+## Deployment
+
+The static site is published to GitHub Pages by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to
+`main`. The workflow runs the PVT regression suite first and deploys only if it
+passes, so a broken correlation cannot reach the live page.
+
+To run the same checks locally:
+
+```bash
+node pvt/tests/run-tests.js
+```
