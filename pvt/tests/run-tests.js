@@ -261,8 +261,8 @@ ok('JSON round-trips', (function () {
   return j.oil.length === m.oil.length && Math.abs(j.pb - m.pb) < 1e-9;
 })());
 ok('every export carries the provenance header', (function () {
-  return /P1-Calculator PVT tool/.test(ecl) && /P1-Calculator PVT tool/.test(imex) &&
-         /P1-Calculator PVT tool/.test(csv) && /CORRELATIONS/.test(ecl);
+  return /PVT Correlation Generator/.test(ecl) && /PVT Correlation Generator/.test(imex) &&
+         /PVT Correlation Generator/.test(csv) && /CORRELATIONS/.test(ecl);
 })());
 
 section('12. Robustness across a fluid sweep');
