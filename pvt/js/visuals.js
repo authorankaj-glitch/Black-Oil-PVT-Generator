@@ -4,6 +4,9 @@
  *   Barrel        one stock-tank barrel of oil plus its solution gas, held at
  *                 the cursor pressure: dissolved gas as specks inside the
  *                 liquid, evolved gas as a growing gas cap with rising bubbles.
+ *   GasBarrel     the reservoir gas from 1 Mscf of separator gas: molecules
+ *                 thin as it expands. Dry and wet gas are single-phase in the
+ *                 reservoir, so nothing condenses inside the barrel.
  *   PhaseDiagram  a schematic pressure-temperature envelope anchored to the
  *                 computed bubble point, with the reservoir isotherm and the
  *                 cursor position on it.
@@ -249,6 +252,131 @@
   };
 
   /* ================================================================== *
+   * Gas barrel
+   *
+   * The reservoir gas that 1 Mscf of separator gas occupies, held at the
+   * cursor pressure. Gas molecules thin out as the gas expands; both dry and
+   * wet gas stay single-phase, so nothing condenses inside the barrel - a wet
+   * gas yields its condensate at the separator, which the labels say.
+   * ================================================================== */
+  var NMOL = 64;
+
+  function GasBarrel(host, opts) {
+    this.host = host;
+    this.opts = opts;
+    this.build();
+  }
+
+  GasBarrel.prototype.build = function () {
+    var o = this.opts, kind = o.kind;
+    card(this.host, 'Gas expansion',
+      'Reservoir gas from 1 Mscf of separator gas, at the cursor pressure');
+
+    var wrap = document.createElement('div');
+    wrap.className = 'barrel-wrap';
+    this.host.appendChild(wrap);
+    var svg = el('svg', { viewBox: '0 0 ' + BW + ' ' + BH, class: 'barrel-svg',
+      role: 'img', 'aria-label': 'Barrel showing the reservoir gas at the cursor pressure' });
+    this.svg = svg;
+    wrap.appendChild(svg);
+
+    var uid = 'gbar' + Math.random().toString(36).slice(2, 8);
+    var defs = el('defs');
+    var clipBody = el('clipPath', { id: uid + '-body' });
+    clipBody.appendChild(el('path', { d: bodyPath() }));
+    defs.appendChild(clipBody);
+    svg.appendChild(defs);
+
+    var contents = el('g', { 'clip-path': 'url(#' + uid + '-body)' });
+    svg.appendChild(contents);
+    contents.appendChild(el('rect', { class: 'barrel-gas-fill', x: XL - BULGE - 2, y: YT - KAPPA,
+      width: BARW + 2 * BULGE + 4, height: BARH + 2 * KAPPA }));
+
+    var seed = 7;
+    function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+    /* gas molecules: more of them are shown as the gas is compressed */
+    var molG = el('g', { class: 'gas-molecules' });
+    this.mols = [];
+    for (var i = 0; i < NMOL; i++) {
+      var my = YT + 6 + rnd() * (BARH - 10);
+      var mw = halfWidth(my) - 9;
+      var m = el('circle', { cx: CX + (rnd() * 2 - 1) * mw, cy: my, r: 1.4 + rnd() * 1.4 });
+      molG.appendChild(m);
+      this.mols.push(m);
+    }
+    contents.appendChild(molG);
+
+    var hoops = el('g', { class: 'barrel-hoops', 'clip-path': 'url(#' + uid + '-body)' });
+    [0.3, 0.7].forEach(function (f) {
+      var y = YT + f * BARH, w = halfWidth(y);
+      hoops.appendChild(el('path', { d: 'M ' + (CX - w) + ' ' + y +
+        ' C ' + (CX - w) + ' ' + (y + 7) + ' ' + (CX + w) + ' ' + (y + 7) + ' ' + (CX + w) + ' ' + y }));
+    });
+    svg.appendChild(hoops);
+    svg.appendChild(el('path', { class: 'barrel-shell', d: bodyPath() }));
+    svg.appendChild(el('ellipse', { class: 'barrel-rim', cx: CX, cy: YT, rx: RX, ry: RIM }));
+
+    var lx = XR + BULGE + 16;
+    this.gasLabel = text(svg, lx, YT + 18, 'barrel-label', '');
+    this.gasSub = text(svg, lx, YT + 34, 'barrel-sublabel', '');
+    this.gasSub2 = text(svg, lx, YT + 49, 'barrel-sublabel', '');
+    this.liqLabel = text(svg, lx, YB - 34, 'barrel-label', 'No liquid in the reservoir');
+    this.liqSub = text(svg, lx, YB - 18, 'barrel-sublabel', '');
+    this.gasKey = el('rect', { class: 'key-swatch key-gas', x: XR + BULGE + 2, y: YT + 8, width: 8, height: 8, rx: 2 });
+    svg.appendChild(this.gasKey);
+    this.liqKey = el('rect', { class: 'key-swatch key-cond', x: XR + BULGE + 2, y: YB - 44, width: 8, height: 8, rx: 2 });
+    svg.appendChild(this.liqKey);
+    this.liqKey.style.opacity = 0.25;
+    this.stateLabel = text(svg, X0, BH - 10, 'barrel-state',
+      kind === 'wet' ? 'Wet gas — single phase in the reservoir at every pressure'
+                     : 'Dry gas — single phase in the reservoir and the separator');
+
+    this.read = document.createElement('dl');
+    this.read.className = 'readout';
+    wrap.appendChild(this.read);
+    this.rows = {};
+    var self = this;
+    var list = [['p', 'Pressure'], ['z', 'z-factor'], ['bg', 'Gas FVF Bg'], ['eg', 'Gas expansion Eg'],
+                ['rho', 'Gas density'], ['mu', 'Gas viscosity']];
+    if (kind !== 'dry') list.push(['rv', 'Condensate in the gas Rv']);
+    list.push(['vol', 'Cell volume V/Vi']);
+    list.forEach(function (r) {
+      var dt = document.createElement('dt');
+      dt.textContent = r[1];
+      var dd = document.createElement('dd');
+      self.read.appendChild(dt);
+      self.read.appendChild(dd);
+      self.rows[r[0]] = dd;
+    });
+  };
+
+  GasBarrel.prototype.update = function (p) {
+    var o = this.opts, s = o.state(p), kind = o.kind;
+
+    /* density of the gas: a compressed gas packs more molecules in */
+    var dens = Math.max(0.08, Math.min(1, s.densityFrac));
+    var nm = Math.round(NMOL * dens);
+    this.mols.forEach(function (c, i) { c.style.opacity = i < nm ? 0.55 : 0; });
+
+    this.gasLabel.textContent = 'Gas  100 %';
+    this.gasSub.textContent = 'z ' + s.z.toFixed(3) + ' · ρg ' + o.fmt('rho', s.rhoG) + ' ' + o.label('rho');
+    this.gasSub2.textContent = kind === 'dry' ? 'no condensate in the gas'
+      : o.fmt('cgr', s.rv) + ' ' + o.label('cgr') + ' of condensate vaporised';
+    this.liqSub.textContent = kind === 'wet'
+      ? o.fmt('cgr', o.cgr) + ' ' + o.label('cgr') + ' condenses at the separator'
+      : 'no liquid at the separator either';
+
+    this.rows.p.textContent = o.fmt('p', p) + ' ' + o.label('p');
+    this.rows.z.textContent = s.z.toFixed(4);
+    this.rows.bg.textContent = o.fmt('bg', s.bg) + ' ' + o.label('bg');
+    this.rows.eg.textContent = (1 / s.bg).toFixed(1) + ' scf/ft³';
+    this.rows.rho.textContent = o.fmt('rho', s.rhoG) + ' ' + o.label('rho');
+    this.rows.mu.textContent = o.fmt('mu', s.mug) + ' ' + o.label('mu');
+    if (this.rows.rv) this.rows.rv.textContent = o.fmt('cgr', s.rv) + ' ' + o.label('cgr');
+    this.rows.vol.textContent = s.relVol.toFixed(3);
+  };
+
+  /* ================================================================== *
    * Phase diagram
    * ================================================================== */
   var PW = 470, PH = 330, PM = { top: 18, right: 16, bottom: 40, left: 60 };
@@ -261,8 +389,10 @@
 
   PhaseDiagram.prototype.build = function () {
     var o = this.opts, env = o.env, self = this;
+    var gas = env.kind && env.kind !== 'oil';
     card(this.host, 'Pressure-temperature phase envelope',
-      'Schematic envelope anchored to the computed bubble point — a true envelope needs a compositional EOS');
+      gas ? 'Schematic envelope sized from the gas pseudo-critical properties — a true envelope needs a compositional EOS'
+          : 'Schematic envelope anchored to the computed bubble point — a true envelope needs a compositional EOS');
 
     var wrap = document.createElement('div');
     wrap.className = 'phase-wrap';
@@ -306,12 +436,15 @@
       }).join(' ');
     }
     var region = d(env.bubble) + ' ' + d(env.dew, false) + ' Z';
-    svg.appendChild(el('path', { class: 'phase-fill', d: region }));
+    svg.appendChild(el('path', { class: 'phase-fill' + (gas ? ' gas' : ''), d: region }));
 
     env.quality.forEach(function (q, i) {
       svg.appendChild(el('path', { class: 'quality-line', d: d(q.points) }));
-      /* label near the critical end, where the fan is widest and nothing else sits */
-      var at = q.points[Math.round(q.points.length * (0.26 + 0.05 * i))];
+      /* label near the critical end, where the fan is widest; the small
+         dry/wet-gas envelope has no room for labels at all */
+      if (gas) return;
+      var f = 0.26 + 0.05 * i;
+      var at = q.points[Math.round((q.points.length - 1) * f)];
       text(svg, sx(at.t) + 4, sy(at.p) + 10, 'quality-label halo-text', (q.q * 100).toFixed(0) + '%');
     });
 
@@ -326,36 +459,66 @@
 
     /* region labels, placed inside the region they name */
     text(svg, PM.left + 10, PM.top + 22, 'region-label halo-text', 'Single-phase liquid');
-    text(svg, PM.left + 10, PM.top + 36, 'region-sublabel halo-text', 'undersaturated oil');
+    text(svg, PM.left + 10, PM.top + 36, 'region-sublabel halo-text', gas ? 'condensed liquid' : 'undersaturated oil');
 
     /* the two-phase label sits low and right of the fan, where the isotherm
        callout never reaches */
-    var mid = env.quality[1].points[Math.round(env.quality[1].points.length * 0.55)];
-    text(svg, sx(mid.t) + 20, sy(mid.p) + 26, 'region-label halo-text', 'Two-phase', 'middle');
-    text(svg, sx(mid.t) + 20, sy(mid.p) + 40, 'region-sublabel halo-text', 'oil + free gas', 'middle');
+    var midX, midY;
+    if (!gas) {
+      var mid = env.quality[1].points[Math.round(env.quality[1].points.length * 0.55)];
+      midX = sx(mid.t) + 20; midY = sy(mid.p) + 26;
+    } else if (env.kind === 'condensate') {
+      /* between the critical point and the isotherm, clear of the cursor */
+      midX = sx(env.tc + 0.35 * (env.tres - env.tc)); midY = sy(0.55 * env.pc);
+    } else {
+      /* a small envelope: label it from just above its crest */
+      midX = sx(env.tc + 0.35 * (env.tct - env.tc)); midY = sy(env.pcb) - 22;
+    }
+    text(svg, midX, midY, 'region-label halo-text', 'Two-phase', 'middle');
+    text(svg, midX, midY + 14, 'region-sublabel halo-text', gas ? 'gas + liquid' : 'oil + free gas', 'middle');
 
-    text(svg, PW - PM.right - 6, sy(0.13 * env.pc), 'region-label halo-text', 'Single-phase gas', 'end');
+    var xIso = sx(env.tres);
+    if (gas) {
+      /* the gas region: above and right of the envelope, left of the
+         isotherm so the cursor callout (drawn right of it) never covers it */
+      text(svg, xIso - 10, sy(0.5 * env.pMaxPlot), 'region-label halo-text', 'Single-phase gas', 'end');
+    } else {
+      text(svg, PW - PM.right - 6, sy(0.13 * env.pc), 'region-label halo-text', 'Single-phase gas', 'end');
+    }
 
     /* the reservoir isotherm: the depletion path this model walks down */
-    svg.appendChild(el('line', { class: 'isotherm', x1: sx(env.tres), x2: sx(env.tres),
+    svg.appendChild(el('line', { class: 'isotherm', x1: xIso, x2: xIso,
       y1: sy(0), y2: PM.top }));
-    text(svg, sx(env.tres) + 5, PM.top + 10, 'phase-annot',
-      'Reservoir T = ' + o.fmt('T', env.tres) + ' ' + o.label('T'));
+    var isoRight = xIso > PW - PM.right - 130;
+    text(svg, xIso + (isoRight ? -5 : 5), PM.top + 10, 'phase-annot halo-text',
+      'Reservoir T = ' + o.fmt('T', env.tres) + ' ' + o.label('T'), isoRight ? 'end' : 'start');
 
-    this.track = el('line', { class: 'isotherm-track', x1: sx(env.tres), x2: sx(env.tres),
+    /* separator conditions: inside the envelope for a wet gas or a
+       condensate (liquid at the surface), outside it for a dry gas */
+    if (gas && env.sep) {
+      var sxp = sx(env.sep.t), syp = sy(env.sep.p);
+      svg.appendChild(el('rect', { class: 'sep-dot', x: sxp - 4.5, y: syp - 4.5, width: 9, height: 9, rx: 1.5 }));
+      var low = syp > PH - PM.bottom - 24;
+      text(svg, sxp, low ? syp - 9 : syp + 18, 'phase-annot halo-text', 'Separator', 'middle');
+    }
+
+    this.track = el('line', { class: 'isotherm-track', x1: xIso, x2: xIso,
       y1: sy(o.pMinTable), y2: sy(o.pMaxTable) });
     svg.appendChild(this.track);
-    svg.appendChild(el('circle', { class: 'pb-dot', cx: sx(env.tres), cy: sy(env.pb), r: 4 }));
-    text(svg, sx(env.tres) - 8, sy(env.pb) + 4, 'phase-annot', 'Pb', 'end');
+    var pAnchor = env.psat !== null && env.psat !== undefined ? env.psat : o.pMaxTable;
+    if (env.psat !== null && env.psat !== undefined) {
+      svg.appendChild(el('circle', { class: 'pb-dot', cx: xIso, cy: sy(env.psat), r: 4 }));
+      text(svg, xIso - 8, sy(env.psat) + 4, 'phase-annot halo-text', env.satLabel || 'Pb', 'end');
+    }
 
-    this.halo = el('circle', { class: 'cursor-halo', cx: sx(env.tres), cy: sy(env.pb), r: 11 });
+    this.halo = el('circle', { class: 'cursor-halo', cx: xIso, cy: sy(pAnchor), r: 11 });
     svg.appendChild(this.halo);
-    this.dot = el('circle', { class: 'cursor-dot', cx: sx(env.tres), cy: sy(env.pb), r: 5.5 });
+    this.dot = el('circle', { class: 'cursor-dot', cx: xIso, cy: sy(pAnchor), r: 5.5 });
     svg.appendChild(this.dot);
     this.callBg = el('rect', { class: 'cursor-chip', rx: 6, x: -99, y: -99, width: 1, height: 1 });
     svg.appendChild(this.callBg);
-    this.cursorLabel = text(svg, sx(env.tres) + 12, sy(env.pb) - 10, 'cursor-label', '');
-    this.cursorState = text(svg, sx(env.tres) + 12, sy(env.pb) + 4, 'cursor-sublabel', '');
+    this.cursorLabel = text(svg, xIso + 12, sy(pAnchor) - 10, 'cursor-label', '');
+    this.cursorState = text(svg, xIso + 12, sy(pAnchor) + 4, 'cursor-sublabel', '');
 
     /* the diagram is also a control: drag along the isotherm to set pressure */
     var overlay = el('rect', { x: PM.left, y: PM.top, width: xw, height: yh,
@@ -377,8 +540,10 @@
 
     var legend = document.createElement('ul');
     legend.className = 'legend';
-    [['bubble-line', 'Bubble-point line'], ['dew-line', 'Dew-point line'],
-     ['quality-line', 'Iso-liquid volume %']].forEach(function (l) {
+    var legendItems = [['bubble-line', 'Bubble-point line'], ['dew-line', 'Dew-point line'],
+     ['quality-line', 'Iso-liquid volume %']];
+    if (gas) legendItems.push(['sep', 'Separator conditions']);
+    legendItems.forEach(function (l) {
       var li = document.createElement('li');
       var k = document.createElement('span');
       k.className = 'legend-key key-' + l[0];
@@ -392,8 +557,16 @@
 
     var note = document.createElement('p');
     note.className = 'hint phase-note';
-    note.textContent = 'Classified as a ' + env.fluidType + ': the critical temperature sits about ' +
-      o.convDeltaT(env.dT).toFixed(0) + ' ' + o.label('T') + ' above the reservoir temperature.';
+    if (!gas) {
+      note.textContent = 'Classified as a ' + env.fluidType + ': the critical temperature sits about ' +
+        o.convDeltaT(env.dT).toFixed(0) + ' ' + o.label('T') + ' above the reservoir temperature.';
+    } else if (env.kind === 'wet') {
+      note.textContent = 'Classified as a wet gas: the reservoir temperature lies above the cricondentherm, so the ' +
+        'reservoir stays single-phase, but the separator sits inside the envelope and recovers condensate.';
+    } else {
+      note.textContent = 'Classified as a dry gas: both the reservoir path and the separator lie outside the envelope — ' +
+        'no liquid forms anywhere in the production system.';
+    }
     this.host.appendChild(note);
   };
 
@@ -403,7 +576,8 @@
     var y = this.sy(p), x = this.sx(env.tres);
     this.dot.setAttribute('cy', y);
     this.halo.setAttribute('cy', y);
-    var above = p > env.pb + 1e-6;
+    var gas = env.kind && env.kind !== 'oil';
+    var above = gas ? true : p > env.pb + 1e-6;
     /* keep the two-line callout inside the plot at either end of the track */
     var lowEdge = y > PH - PM.bottom - 34;
     var flip = y < PM.top + 40;
@@ -411,14 +585,20 @@
     this.cursorLabel.setAttribute('y', yTop);
     this.cursorState.setAttribute('y', yTop + 14);
     this.cursorLabel.textContent = o.fmt('p', p) + ' ' + o.label('p');
-    var s = o.state(p);
-    this.cursorState.textContent = o.atBubblePoint(p)
-      ? 'At the bubble point — first bubble of gas'
-      : (above
-        ? 'Single phase — undersaturated oil'
-        : 'Two phase — ' + (s.liquidFrac * 100).toFixed(0) + '% liquid by volume');
-    this.dot.setAttribute('class', 'cursor-dot ' + (above ? 'is-liquid' : 'is-twophase'));
-    this.halo.setAttribute('class', 'cursor-halo ' + (above ? 'is-liquid' : 'is-twophase'));
+    var s = o.state(p), cls;
+    if (gas) {
+      this.cursorState.textContent = 'Single phase — gas';
+      cls = 'is-gas';
+    } else {
+      this.cursorState.textContent = o.atBubblePoint(p)
+        ? 'At the bubble point — first bubble of gas'
+        : (above
+          ? 'Single phase — undersaturated oil'
+          : 'Two phase — ' + (s.liquidFrac * 100).toFixed(0) + '% liquid by volume');
+      cls = above ? 'is-liquid' : 'is-twophase';
+    }
+    this.dot.setAttribute('class', 'cursor-dot ' + cls);
+    this.halo.setAttribute('class', 'cursor-halo ' + cls);
 
     /* size the chip to the text, and pull the callout left if it would run off */
     try {
@@ -439,7 +619,9 @@
   };
 
   return {
-    createBarrel: function (host, opts) { return new Barrel(host, opts); },
+    createBarrel: function (host, opts) {
+      return opts.kind && opts.kind !== 'oil' ? new GasBarrel(host, opts) : new Barrel(host, opts);
+    },
     createPhaseDiagram: function (host, opts) { return new PhaseDiagram(host, opts); }
   };
 });

@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Black-Oil PVT Generator</title>
-<meta name="description" content="Interactive black-oil PVT correlation generator for oil, gas and formation water, with simulator-ready export.">
+<meta name="description" content="Interactive PVT correlation generator for oil reservoirs and gas reservoirs (dry gas and wet gas) plus formation water, with simulator-ready export.">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
     <h1>Black-Oil PVT Generator</h1>
-    <span>Industry-standard correlations for oil, gas and formation water &mdash; with simulator-ready export</span>
+    <span>Industry-standard correlations for oil and gas reservoirs &mdash; with simulator-ready export</span>
   </div>
   <div class="topbar-actions">
     <div class="seg" role="group" aria-label="Unit system">
@@ -25,6 +25,14 @@
 <div class="layout">
   <!-- ------------------------------------------------ inputs ------ -->
   <form class="panel sidebar" id="inputs" autocomplete="off">
+    <fieldset>
+      <legend>Reservoir fluid system</legend>
+      <div class="seg fluid-seg" role="group" aria-label="Reservoir fluid for the PVT calculation">
+        <button type="button" id="fluidOil" aria-pressed="true">Oil reservoir</button>
+        <button type="button" id="fluidGas" aria-pressed="false">Gas reservoir</button>
+      </div>
+    </fieldset>
+
     <fieldset>
       <legend>Fluid preset</legend>
       <div class="field wide">
@@ -42,20 +50,32 @@
 
     <fieldset>
       <legend>Reservoir fluid</legend>
-      <div class="field"><label for="api">Stock-tank oil gravity <span class="unit">&deg;API</span></label><input type="number" id="api" step="0.1" value="35"></div>
-      <div class="field"><label for="gammaG">Solution gas gravity <span class="unit">air = 1</span></label><input type="number" id="gammaG" step="0.01" value="0.75"></div>
+      <div class="field oil-only"><label for="api">Stock-tank oil gravity <span class="unit">&deg;API</span></label><input type="number" id="api" step="0.1" value="35"></div>
+      <div class="field"><label for="gammaG"><span id="gammaGText">Solution gas gravity</span> <span class="unit">air = 1</span></label><input type="number" id="gammaG" step="0.01" value="0.75"></div>
       <div class="field"><label for="tempF">Reservoir temperature <span class="unit" data-unit="T">&deg;F</span></label><input type="number" id="tempF" step="1" value="180"></div>
-      <div class="field"><label for="spec">Saturation specified by</label>
+      <div class="field oil-only"><label for="spec">Saturation specified by</label>
         <select id="spec"><option value="rsb" selected>Rsb</option><option value="pb">Pb</option></select></div>
-      <div class="field" id="rowRsb"><label for="rsb">Solution GOR at Pb <span class="unit" data-unit="rs">scf/STB</span></label><input type="number" id="rsb" step="10" value="600"></div>
-      <div class="field" id="rowPb" hidden><label for="pbMeas">Bubble-point pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pbMeas" step="50" value="2500"></div>
+      <div class="field oil-only" id="rowRsb"><label for="rsb">Solution GOR at Pb <span class="unit" data-unit="rs">scf/STB</span></label><input type="number" id="rsb" step="10" value="600"></div>
+      <div class="field oil-only" id="rowPb" hidden><label for="pbMeas">Bubble-point pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pbMeas" step="50" value="2500"></div>
       <div class="field"><label for="pSepPsia">Separator pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pSepPsia" step="5" value="114.7"></div>
       <div class="field"><label for="tSepF">Separator temperature <span class="unit" data-unit="T">&deg;F</span></label><input type="number" id="tSepF" step="1" value="80"></div>
     </fieldset>
 
+    <fieldset class="gas-only" hidden>
+      <legend>Gas reservoir</legend>
+      <div class="field wide"><label for="gasKind">Gas type</label>
+        <select id="gasKind">
+          <option value="dry">Dry gas &mdash; no liquid anywhere</option>
+          <option value="wet" selected>Wet gas &mdash; liquid only at the separator</option>
+        </select></div>
+      <div class="field liq-only"><label for="cgr">Condensate-gas ratio <span class="unit" data-unit="cgr">STB/MMscf</span></label><input type="number" id="cgr" step="1" value="15"></div>
+      <div class="field liq-only"><label for="apiC">Condensate gravity <span class="unit">&deg;API</span></label><input type="number" id="apiC" step="0.5" value="55"></div>
+      <p class="hint gas-hint">Both gas types stay single-phase in the reservoir: a dry gas drops no liquid at all, a wet gas yields its condensate at the separator. A retrograde gas condensate is out of scope &mdash; it needs a CCE/CVD study or a compositional model.</p>
+    </fieldset>
+
     <fieldset>
       <legend>Gas composition</legend>
-      <div class="field wide"><label for="gasType">Gas system</label>
+      <div class="field wide oil-only"><label for="gasType">Gas system</label>
         <select id="gasType"><option value="dry" selected>Dry / associated</option><option value="wet">Wet / condensate</option></select></div>
       <div class="field"><label for="yCO2">CO<sub>2</sub> <span class="unit">mol %</span></label><input type="number" id="yCO2" step="0.1" value="0"></div>
       <div class="field"><label for="yH2S">H<sub>2</sub>S <span class="unit">mol %</span></label><input type="number" id="yH2S" step="0.1" value="0"></div>
@@ -64,7 +84,7 @@
 
     <fieldset>
       <legend>Water and rock</legend>
-      <div class="field"><label for="salinity">Brine salinity <span class="unit">wt % NaCl</span></label><input type="number" id="salinity" step="0.5" value="3"></div>
+      <div class="field"><label for="salinity">Brine salinity <span class="unit">ppm NaCl</span></label><input type="number" id="salinity" step="1000" min="0" value="30000"></div>
       <div class="field"><label for="pRefRock">Rock reference pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pRefRock" step="100" value="4000"></div>
       <div class="field"><label for="rockComp">Rock compressibility <span class="unit" data-unit="c">1/psi</span></label><input type="number" id="rockComp" step="1e-6" value="4e-6"></div>
     </fieldset>
@@ -73,12 +93,12 @@
       <legend>Table range</legend>
       <div class="field"><label for="pMin">Minimum pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pMin" step="10" value="100"></div>
       <div class="field"><label for="pMax">Maximum pressure <span class="unit" data-unit="p">psia</span></label><input type="number" id="pMax" step="100" value="6000"></div>
-      <div class="field"><label for="nSat">Saturated nodes</label><input type="number" id="nSat" step="1" min="4" max="60" value="15"></div>
-      <div class="field"><label for="nUnsat">Undersaturated nodes</label><input type="number" id="nUnsat" step="1" min="1" max="30" value="6"></div>
+      <div class="field"><label for="nSat" id="nSatLabel">Saturated nodes</label><input type="number" id="nSat" step="1" min="4" max="60" value="15"></div>
+      <div class="field"><label for="nUnsat" id="nUnsatLabel">Undersaturated nodes</label><input type="number" id="nUnsat" step="1" min="1" max="30" value="6"></div>
     </fieldset>
 
-    <fieldset>
-      <legend>Oil correlations</legend>
+    <fieldset id="oilCorrSet">
+      <legend id="oilCorrLegend">Oil correlations</legend>
       <div class="field wide"><label for="cPb">Bubble point / solution GOR</label>
         <select id="cPb">
           <option value="standing" selected>Standing (1947)</option>
@@ -141,7 +161,7 @@
         </select></div>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="oil-only">
       <legend>Laboratory calibration <span class="unit">optional</span></legend>
       <p class="hint">Enter measured PVT data to anchor the correlations. Leave blank to use them unadjusted.</p>
       <div class="field"><label for="calPb">Measured Pb <span class="unit" data-unit="p">psia</span></label><input type="number" id="calPb" step="10" placeholder="&mdash;"></div>
@@ -192,12 +212,7 @@
     <section id="panel-tables" role="tabpanel" aria-labelledby="tab-tables" hidden>
       <div class="export-bar">
         <div class="field"><label for="tableSel">Table</label>
-          <select id="tableSel">
-            <option value="oil" selected>Oil properties</option>
-            <option value="gas">Gas properties</option>
-            <option value="water">Water properties</option>
-            <option value="pvto">PVTO records (live oil)</option>
-          </select></div>
+          <select id="tableSel"></select></div>
       </div>
       <div class="table-wrap"><table id="dataTable"></table></div>
     </section>
@@ -213,7 +228,7 @@
         <div class="field"><label for="fmtSel">Format</label>
           <select id="fmtSel">
             <option value="eclipse" selected>ECLIPSE / OPM Flow / tNavigator (.INC)</option>
-            <option value="cmg">CMG IMEX / GEM (.dat)</option>
+            <option value="cmg" id="optCmg">CMG IMEX (.dat)</option>
             <option value="csv">CSV property table</option>
             <option value="json">JSON model</option>
           </select></div>
@@ -237,7 +252,7 @@
           <li>B<sub>o</sub> and &mu;<sub>o</sub> on the saturated branch from R<sub>s</sub>(p).</li>
           <li>Above P<sub>b</sub>: B<sub>o</sub> = B<sub>ob</sub>&middot;exp(&minus;&int;c<sub>o</sub>dp), integrated with the trapezoid rule, and &mu;<sub>o</sub> from the undersaturated correlation.</li>
           <li>Gas: pseudo-criticals &rarr; non-hydrocarbon correction &rarr; z &rarr; B<sub>g</sub>, &rho;<sub>g</sub>, c<sub>g</sub>, &mu;<sub>g</sub>.</li>
-          <li>Water: McCain (1991) B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) c<sub>w</sub>.</li>
+          <li>Water: McCain (1991) B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) c<sub>w</sub>. Salinity is entered in ppm (mg of NaCl per kg of brine) and converted to the weight percent the correlations use: wt % = ppm / 10 000.</li>
           <li>Each PVTO record carries its own saturation pressure and undersaturated branch, which is what ECLIPSE expects for live oil.</li>
         </ol>
         <h3 style="margin-top:14px">The two cursor-linked pictures</h3>
@@ -247,16 +262,28 @@
           <li><strong>Phase envelope</strong> &mdash; <em>schematic</em>. A true envelope needs a compositional EOS; this one is built to pass exactly through the calculated (T<sub>res</sub>, P<sub>b</sub>), with the critical temperature placed by a volatility index from R<sub>sb</sub> and API gravity. The bubble point is calculated; the shape around it is constructed. Use it to read the fluid type and the depletion path, not to quote a cricondentherm.</li>
         </ul>
 
+        <h3 style="margin-top:14px">Gas reservoirs (dry gas and wet gas)</h3>
+        <p class="hint">Switch <em>Reservoir fluid system</em> to <strong>Gas reservoir</strong>. Every gas property is reported per standard volume of <em>separator</em> gas &mdash; the basis ECLIPSE PVDG and CMG <code>*PVTG</code> use. Both gas types are single-phase in the reservoir at every pressure.</p>
+        <ol class="hint" style="padding-left:18px">
+          <li>Reservoir-gas gravity from the separator gas recombined with its condensate (McCain, 1990): &gamma;<sub>w</sub> = (R&gamma;<sub>g</sub> + 4584&gamma;<sub>o</sub>) / (R + 132800&gamma;<sub>o</sub>/M<sub>o</sub>), with R = 10<sup>6</sup>/CGR and M<sub>o</sub> = 5954/(API &minus; 8.811). A dry gas is its own reservoir gas.</li>
+          <li>Pseudo-criticals of &gamma;<sub>w</sub> (Sutton, or Standing&rsquo;s dry/wet curve) &rarr; non-hydrocarbon correction &rarr; z, &rho;<sub>g</sub>, c<sub>g</sub>, &mu;<sub>g</sub>.</li>
+          <li>B<sub>g</sub> on the separator basis = B<sub>g</sub>(well stream) &times; (1 + V<sub>eq</sub>&middot;CGR/10<sup>6</sup>), V<sub>eq</sub> = 132800&gamma;<sub>o</sub>/M<sub>o</sub> scf/STB; E<sub>g</sub> = 1/B<sub>g</sub>.</li>
+          <li>Surface condensate from a wet gas is the gas rate &times; CGR; R<sub>v</sub> stays at the CGR at every reservoir pressure.</li>
+          <li>Exports: ECLIPSE PVDG, or CMG <code>*MODEL *GASWATER</code> with <code>*PVTG</code> (dry) and <code>*GASWATER_WITH_CONDENSATE</code> with <code>*PVTG *RV</code> (wet).</li>
+        </ol>
+        <p class="hint">In gas mode the <strong>barrel</strong> holds the reservoir gas from 1 Mscf of separator gas, with molecules thinning as it expands. The <strong>phase envelope</strong> has its critical point at the gas pseudo-critical properties and its cricondentherm below the reservoir temperature, and the separator point shows whether liquid forms at the surface.</p>
+
         <h3 style="margin-top:14px">Limitations worth stating in a report</h3>
         <ul class="hint" style="padding-left:18px">
           <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
-          <li>The gas table is a dry-gas PVDG: no vaporised oil (R<sub>v</sub>). For a gas condensate or a volatile oil, use a compositional or modified black-oil model.</li>
+          <li>In oil mode the gas table is a dry-gas PVDG with no vaporised oil (R<sub>v</sub>). Retrograde gas condensates are not modelled in either mode: below a dew point the liquid drop-out and R<sub>v</sub>(p) need a CCE/CVD study or a compositional model.</li>
+          <li>The gas-mode CMG deck follows the <code>*GASWATER</code> / <code>*GASWATER_WITH_CONDENSATE</code> keyword set; check it on import into Builder, as CMG keyword sets vary between IMEX versions.</li>
           <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
           <li>Calibration stretches the correlation to honour measured P<sub>b</sub> and B<sub>ob</sub>; it does not replace a laboratory CCE/DL study.</li>
           <li>The phase envelope is a schematic construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data.</li>
         </ul>
         <h3 style="margin-top:14px">References</h3>
-        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
+        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
       </div>
     </section>
   </main>

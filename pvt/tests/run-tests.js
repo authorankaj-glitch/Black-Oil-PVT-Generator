@@ -404,5 +404,186 @@ ok('state above Pb reports a single liquid phase',
 ok('state below Pb reports two phases',
    FS.stateAt(env, fm, fm.pb - 500).phase === 'Two-phase');
 
+section('15. Gas reservoirs - recombination and model assembly');
+near('well-stream gravity (McCain) reference value', C.wellstreamGravity(0.7, 100, 50), 0.98670481, 1e-6);
+ok('no condensate leaves the separator gravity unchanged', C.wellstreamGravity(0.7, 0, 50) === 0.7);
+ok('richer gas is heavier', C.wellstreamGravity(0.7, 200, 50) > C.wellstreamGravity(0.7, 50, 50));
+near('condensate MW = 5954/(API - 8.811)', C.condensateMW(50), 5954 / 41.189, 1e-12);
+ok('well-stream factor is 1 for a dry gas and above 1 otherwise',
+   C.wellstreamFactor(0, 50) === 1 && C.wellstreamFactor(100, 50) > 1);
+
+var GBASE = { fluid: 'gas', gammaG: 0.68, tempF: 230, apiC: 55, pMin: 200, pMax: 6000,
+              tSepF: 80, pSepPsia: 514.7, nSat: 20 };
+function gm(o) { return M.build(Object.assign({}, GBASE, o)); }
+var gDry = gm({ gasKind: 'dry', cgr: 50 });
+var gWet = gm({ gasKind: 'wet', cgr: 12 });
+
+ok('fluid flag is carried on every model', gDry.fluid === 'gas' && M.build({}).fluid === 'oil');
+ok('only dry and wet gas are modelled - a condensate input falls back to dry',
+   M.build({ fluid: 'gas', gasKind: 'condensate', gammaG: 0.7, cgr: 90, apiC: 52, tempF: 250 }).gasKind === 'dry');
+ok('neither gas has a saturation pressure in the reservoir',
+   gDry.psat === null && gWet.psat === null);
+ok('a dry gas ignores any CGR entered', gDry.cgr === 0 && gDry.gammaW === 0.68 && gDry.fws === 1 &&
+   gDry.gas.every(function (g) { return g.rv === 0 && Math.abs(g.bg - g.bgw) < 1e-15; }));
+ok('dry-gas Bg = 0.0282793 z T / p', gDry.gas.every(function (g) {
+  return Math.abs(g.bg - 0.0282793 * g.z * (230 + 459.67) / g.p) < 1e-12;
+}));
+ok('Eg is 1/Bg at every node', gWet.gas.every(function (g) { return Math.abs(g.eg - 1 / g.bg) < 1e-12; }));
+ok('wet gas: reservoir gas is heavier than separator gas', gWet.gammaW > gWet.input.gammaG);
+ok('wet gas: Bg on the separator basis = well-stream Bg x well-stream factor',
+   gWet.gas.every(function (g) { return Math.abs(g.bg - g.bgw * gWet.fws) < 1e-12; }));
+ok('wet gas: Rv stays at the CGR at every pressure',
+   gWet.gas.every(function (g) { return g.rv === 12; }));
+ok('Bg falls monotonically with pressure', [gDry, gWet].every(function (m) {
+  for (var i = 1; i < m.gas.length; i++) if (m.gas[i].bg >= m.gas[i - 1].bg) return false;
+  return true;
+}));
+ok('a rich wet gas is flagged as a possible condensate',
+   gm({ gasKind: 'wet', cgr: 120 }).warnings.some(function (w) { return /gas condensate/.test(w); }));
+ok('clean dry and wet gases carry no QC warnings',
+   gDry.warnings.length === 0 && gWet.warnings.length === 0, gDry.warnings.concat(gWet.warnings).join(' | '));
+
+section('16. Gas barrel (single-phase expansion)');
+ok('no liquid anywhere in the reservoir', [gDry, gWet].every(function (m) {
+  for (var p = 200; p <= 6000; p += 200) {
+    var s = FS.barrelState(m, p);
+    if (s.liquidFrac !== 0 || s.gasFrac !== 1) return false;
+  }
+  return true;
+}));
+near('V/Vi is 1 at the top of the table', FS.barrelState(gWet, 6000).relVol, 1, 1e-9);
+ok('the cell expands as pressure falls', (function () {
+  var prev = 0;
+  for (var p = 6000; p >= 200; p -= 100) {
+    var v = FS.barrelState(gDry, p).relVol;
+    if (v < prev - 1e-9) return false;
+    prev = v;
+  }
+  return prev > 1;
+})());
+ok('the gas thins out as it expands', FS.barrelState(gDry, 1000).densityFrac < FS.barrelState(gDry, 4000).densityFrac);
+ok('the barrel reports the vaporised condensate a wet gas carries',
+   FS.barrelState(gWet, 3000).rv === 12 && FS.barrelState(gDry, 3000).rv === 0);
+
+section('17. Gas phase envelopes');
+var eWet = FS.phaseEnvelope(gWet), eDry = FS.phaseEnvelope(gDry);
+ok('wet gas: cricondentherm below the reservoir temperature, separator inside',
+   eWet.tct < 230 && eWet.sep.inside && !eWet.inside(230, 2000));
+ok('dry gas: cricondentherm below the separator temperature, separator outside',
+   eDry.tct < 80 && !eDry.sep.inside);
+ok('the critical point sits at the gas pseudo-criticals, pressure a little above Ppc',
+   Math.abs(eDry.tc - (gDry.pcrit.tpc - 459.67)) < 1e-9 && eDry.pc > gDry.pcrit.ppc);
+ok('fluid type follows the gas type', eDry.fluidType === 'dry gas' && eWet.fluidType === 'wet gas');
+ok('neither envelope reports a saturation pressure', eDry.psat === null && eWet.psat === null);
+ok('state reporting is single-phase gas at every pressure', [[eDry, gDry], [eWet, gWet]].every(function (c) {
+  for (var p = 200; p <= 6000; p += 400) if (FS.stateAt(c[0], c[1], p).phase !== 'Single-phase gas') return false;
+  return true;
+}));
+
+section('18. Gas exports');
+var eclW = E.generate(gWet, 'eclipse', 'field'), eclD = E.generate(gDry, 'eclipse', 'field');
+['DENSITY', 'PVDG', 'PVTW', 'ROCK'].forEach(function (kw) {
+  ok('gas deck contains ' + kw, new RegExp('^' + kw + '\\s*$', 'm').test(eclW));
+});
+ok('no live-oil or wet-gas keywords in a gas deck',
+   !/^PVTO\s*$/m.test(eclW) && !/^PVTG\s*$/m.test(eclW) && !/^PVTO\s*$/m.test(eclD));
+ok('PVDG carries one row per pressure node in rb/Mscf', (function () {
+  var body = eclD.split(/^PVDG\s*$/m)[1].split(/^\/\s*$/m)[0];
+  var rows = body.split('\n').filter(function (l) { return /^\s+\d/.test(l); });
+  if (rows.length !== gDry.gas.length) return false;
+  var first = rows[0].trim().split(/\s+/);
+  return Math.abs(parseFloat(first[1]) - gDry.gas[0].bg * 1000 / 5.614583) < 1e-5;
+})());
+
+/* CMG IMEX gas decks follow the keyword set in the user-supplied example:
+   dry gas *MODEL *GASWATER with *PVTG (p, Eg, visg); wet gas
+   *MODEL *GASWATER_WITH_CONDENSATE with *PVTG *RV (p, Eg, Rv, visg). */
+var cmgD = E.generate(gDry, 'cmg', 'field'), cmgW = E.generate(gWet, 'cmg', 'field');
+ok('dry-gas CMG deck: *MODEL *GASWATER and a plain *PVTG table',
+   /^\*MODEL \*GASWATER\b/m.test(cmgD) && /^\*PVTG\s*$/m.test(cmgD) && !/\*PVTG \*RV/.test(cmgD));
+ok('wet-gas CMG deck: *MODEL *GASWATER_WITH_CONDENSATE and *PVTG *RV',
+   /^\*MODEL \*GASWATER_WITH_CONDENSATE\b/m.test(cmgW) && /^\*PVTG \*RV\s*$/m.test(cmgW));
+ok('CMG decks declare the surface densities they need',
+   /^\*RESERVOIR \*GAS\s*$/m.test(cmgD) && /^\*DENSITY \*GAS/m.test(cmgD) && /^\*DENSITY \*WATER/m.test(cmgD) &&
+   !/^\*DENSITY \*OIL/m.test(cmgD) && /^\*DENSITY \*OIL/m.test(cmgW));
+ok('dry-gas *PVTG rows are p, Eg, visg', (function () {
+  var body = cmgD.split(/^\*PVTG\s*$/m)[1];
+  var rows = body.split('\n').filter(function (l) { return /^\s+\d/.test(l); });
+  if (rows.length !== gDry.gas.length) return false;
+  var f = rows[0].trim().split(/\s+/), g = gDry.gas[0];
+  return f.length === 3 && Math.abs(parseFloat(f[0]) - g.p) < 0.01 &&
+         Math.abs(parseFloat(f[1]) - g.eg) < 1e-3 && Math.abs(parseFloat(f[2]) - g.mug) < 1e-6;
+})());
+ok('wet-gas *PVTG *RV rows are p, Eg, Rv, visg with Rv in STB/MMscf', (function () {
+  var body = cmgW.split(/^\*PVTG \*RV\s*$/m)[1];
+  var rows = body.split('\n').filter(function (l) { return /^\s+\d/.test(l); });
+  if (rows.length !== gWet.gas.length) return false;
+  var f = rows[0].trim().split(/\s+/), g = gWet.gas[0];
+  return f.length === 4 && Math.abs(parseFloat(f[1]) - g.eg) < 1e-3 &&
+         Math.abs(parseFloat(f[2]) - 12) < 1e-6 && Math.abs(parseFloat(f[3]) - g.mug) < 1e-6;
+})());
+ok('the SI CMG deck converts pressure to kPa and Rv to m3/m3', (function () {
+  var si = E.generate(gWet, 'cmg', 'metric');
+  var rows = si.split(/^\*PVTG \*RV\s*$/m)[1].split('\n').filter(function (l) { return /^\s+\d/.test(l); });
+  var f = rows[0].trim().split(/\s+/), g = gWet.gas[0];
+  return /^\*INUNIT \*SI\s*$/m.test(si) && Math.abs(parseFloat(f[0]) - g.p * 6.89475729) < 0.05 &&
+         Math.abs(parseFloat(f[2]) - 12 * 5.614583e-6) < 1e-10;
+})());
+ok('gas CMG decks carry the water and rock sections',
+   /^\*REFPW /m.test(cmgW) && /^\*BWI /m.test(cmgW) && /^\*CW /m.test(cmgW) &&
+   /^\*CPOR /m.test(cmgW) && /^\*PRPOR /m.test(cmgW));
+ok('gas CSV has one row per pressure with an Rv column', (function () {
+  var lines = E.generate(gWet, 'csv').split('\n').filter(function (l) { return l && !/^#/.test(l); });
+  return /Rv_STB_MMscf/.test(lines[0]) && !/Liquid_dropout/.test(lines[0]) && lines.length - 1 === gWet.gas.length;
+})());
+ok('every gas export header states the single-phase scope',
+   /single-phase gas/.test(eclW) && /single-phase gas/.test(cmgW));
+
+section('19. Brine salinity reporting (page takes ppm, correlations take wt%)');
+ok('every deck header reports salinity in ppm with the weight percent beside it', (function () {
+  var m = M.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMax: 6000, salinity: 3 });
+  var line = E.generate(m, 'eclipse', 'field').split('\n').filter(function (l) { return /Brine salinity/.test(l); })[0];
+  return /30000 ppm NaCl equivalent \(3\.000 wt%\)/.test(line);
+})());
+ok('the gas decks report it the same way', (function () {
+  var g = M.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12, apiC: 58, tempF: 230,
+                    pMax: 6000, salinity: 5 });
+  return /50000 ppm NaCl equivalent \(5\.000 wt%\)/.test(
+    E.generate(g, 'cmg', 'field').split('\n').filter(function (l) { return /Brine salinity/.test(l); })[0]);
+})());
+ok('water properties still respond to salinity', (function () {
+  var fresh = M.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMax: 6000, salinity: 0.1 });
+  var briny = M.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMax: 6000, salinity: 20 });
+  return briny.rhoWsc > fresh.rhoWsc && briny.water[0].muw > fresh.water[0].muw;
+})());
+
+section('20. Robustness across a gas sweep');
+ok('every gas case builds finite, positive tables', (function () {
+  var bad = [];
+  ['dry', 'wet'].forEach(function (kind) {
+    [0.56, 0.65, 0.8, 0.95].forEach(function (g) {
+      [120, 200, 300].forEach(function (t) {
+        [5, 25, 60].forEach(function (cgr) {
+          [[0, 0, 0], [0.06, 0.10, 0.02]].forEach(function (inert) {
+            try {
+              var m = M.build({ fluid: 'gas', gasKind: kind, gammaG: g, tempF: t, cgr: cgr, apiC: 50,
+                                pMin: 150, pMax: 8000, tSepF: 80, pSepPsia: 314.7,
+                                yCO2: inert[0], yH2S: inert[1], yN2: inert[2] });
+              var fine = m.gas.every(function (r) {
+                return r.bg > 0 && r.eg > 0 && r.z > 0.2 && r.mug > 0 && isFinite(r.cg) && r.rv >= 0;
+              });
+              var e = FS.phaseEnvelope(m);
+              var decks = E.generate(m, 'cmg', 'field').length > 500 && E.generate(m, 'eclipse', 'metric').length > 500;
+              if (!fine || !isFinite(e.tct) || !isFinite(e.pc) || !decks) bad.push([kind, g, t, cgr].join('/'));
+            } catch (ex) { bad.push([kind, g, t, cgr, ex.message].join('/')); }
+          });
+        });
+      });
+    });
+  });
+  if (bad.length) console.log('     ' + bad.slice(0, 5).join('\n     '));
+  return bad.length === 0;
+})());
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
