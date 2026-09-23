@@ -25,8 +25,11 @@
     api: 35, gammaG: 0.75, rsb: 600, pbMeas: null, spec: 'rsb',
     tempF: 180, tSepF: 80, pSepPsia: 114.7,
     pMax: 5000, pMin: 14.7, nSat: 15, nUnsat: 6,
+    /* salinity is weight % NaCl equivalent - the page converts its ppm input */
     salinity: 3.0, pRefRock: 4000, rockComp: 4e-6,
     gasType: 'dry', yCO2: 0, yH2S: 0, yN2: 0,
+    /* gas-reservoir mode (fluid = 'gas') */
+    fluid: 'oil', gasKind: 'dry', cgr: 0, apiC: 50,
     corr: {
       pb: 'standing', bo: 'standing', co: 'vasquezBeggs',
       muod: 'beggsRobinson', muob: 'beggsRobinson', muou: 'vasquezBeggs',
@@ -295,7 +298,7 @@
     });
 
     var out = {
-      input: inp,
+      fluid: 'oil', input: inp, psat: pb,
       pb: pb, pbCalc: pbCalc, pbFactor: pbFactor, boFactor: boFactor,
       rsb: s.rsb, bob: bob, muob: muob, muod: muOd,
       cob: coAt(pb),
@@ -310,5 +313,110 @@
     return out;
   }
 
-  return { build: build, DEFAULTS: DEFAULTS, pressureGrid: pressureGrid, rsbFromPb: rsbFromPb };
+  /* ================================================================== *
+   * Gas reservoirs: dry gas and wet gas
+   *
+   * Basis: one scf of SEPARATOR gas (the dry-gas basis ECLIPSE PVDG uses).
+   * The reservoir gas is the separator gas recombined with the condensate it
+   * yields at the surface (CGR, STB/MMscf):
+   *   gamma_w = (R gamma_g + 4584 gamma_o) / (R + 132800 gamma_o / Mo)
+   *   Bg(separator basis) = Bg(well stream) * (1 + Veq * CGR / 1e6)
+   *
+   * Both fluids stay single-phase everywhere in the reservoir: a dry gas
+   * drops no liquid at all, a wet gas only at the separator. Retrograde
+   * condensation is out of scope - a gas condensate needs a CCE/CVD study or
+   * a compositional model, not black-oil correlations.
+   * ================================================================== */
+
+  function gasWarnings(inp, m) {
+    var w = [];
+    if (inp.yCO2 + inp.yH2S + inp.yN2 > 0.2) {
+      w.push('Non-hydrocarbon content exceeds 20 mol% - z-factor correlations lose accuracy; use a laboratory or EOS-based table.');
+    }
+    if (m.gammaW > 1.2) {
+      w.push('Reservoir-gas gravity ' + m.gammaW.toFixed(3) + ' is above 1.2 - the pseudo-critical correlations were fitted to lighter gases.');
+    }
+    if (inp.gasKind === 'wet') {
+      if (inp.apiC < 40 || inp.apiC > 70) {
+        w.push('Condensate gravity of ' + inp.apiC.toFixed(1) + ' API is unusual for a wet gas (typically 40 - 70 API).');
+      }
+      if (inp.cgr > 50) {
+        w.push('A CGR of ' + inp.cgr.toFixed(0) + ' STB/MMscf usually means a gas condensate, which drops liquid in the reservoir below its dew point. This tool models the reservoir as single-phase gas - check that the reservoir temperature lies above the cricondentherm, or use a compositional model.');
+      }
+    }
+    return w;
+  }
+
+  function buildGas(userInput) {
+    var inp = merge(DEFAULTS, userInput);
+    var c = inp.corr, kind = inp.gasKind === 'wet' ? 'wet' : 'dry';
+    var cgr = kind === 'dry' ? 0 : Math.max(inp.cgr || 0, 0);
+    var apiC = inp.apiC;
+    var grid = pressureGrid(inp.pMin, inp.pMax, inp.pMax, inp.nSat, 0);
+
+    var gammaW = C.wellstreamGravity(inp.gammaG, cgr, apiC);
+    var fws = C.wellstreamFactor(cgr, apiC);
+    var pcrit = C.pseudoCriticals(gammaW, {
+      method: c.pcrit === 'standing' ? (kind === 'dry' ? 'standingDry' : 'standingWet') : 'sutton',
+      correction: c.inertCorr === 'carr' ? 'carr' : 'wichertAziz',
+      yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2
+    });
+    var gasOpt = { _pc: pcrit, yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2 };
+    var tpr = (inp.tempF + C.TZERO) / pcrit.tpc;
+
+    var gas = [], water = [];
+    grid.forEach(function (p) {
+      var z = C.gasZ(c.z, p, inp.tempF, gammaW, gasOpt);
+      var bgw = C.gasBg(z, p, inp.tempF);                /* well stream, ft3/scf */
+      var bg = bgw * fws;                                /* separator-gas basis  */
+      var rhoG = C.gasDensity(z, p, inp.tempF, gammaW);
+      var mug = c.mug === 'carrKobayashiBurrows'
+        ? C.MU_G.carrKobayashiBurrows(p / pcrit.ppc, tpr, inp.tempF, gammaW, gasOpt)
+        : C.MU_G.leeGonzalezEakin(rhoG, inp.tempF, gammaW);
+      gas.push({
+        p: p, rv: cgr, z: z, bg: bg, bgw: bgw, bgRbMscf: bg * 1000 / 5.614583,
+        eg: 1 / bg, mug: mug, rhoG: rhoG,
+        cg: C.gasCompressibility(c.z, p, inp.tempF, gammaW, gasOpt)
+      });
+      var bw = C.waterBw(p, inp.tempF);
+      water.push({
+        p: p, bw: bw,
+        muw: C.waterViscosity(p, inp.tempF, inp.salinity),
+        cw: C.waterCompressibility(p, inp.tempF, inp.salinity),
+        rhoW: C.waterDensitySC(inp.salinity) / bw
+      });
+    });
+
+    var out = {
+      fluid: 'gas', gasKind: kind, input: inp,
+      cgr: cgr, apiC: apiC, gammaW: gammaW, fws: fws,
+      ogr: cgr > 0 ? 1e6 / cgr : null,
+      rhoOsc: 62.428 * C.apiToSg(kind === 'dry' ? 50 : apiC),
+      rhoGsc: C.RHO_AIR_SC * inp.gammaG,
+      rhoWsc: C.waterDensitySC(inp.salinity),
+      pcrit: pcrit, gas: gas, water: water,
+      /* no saturation pressure exists in the reservoir for either fluid */
+      psat: null
+    };
+    out.warnings = gasWarnings(inp, out).concat(gasTableChecks(out));
+    return out;
+  }
+
+  function gasTableChecks(m) {
+    var w = [], i, eps = 1e-9;
+    for (i = 1; i < m.gas.length; i++) {
+      if (m.gas[i].bg > m.gas[i - 1].bg + eps) { w.push('Bg is not monotonically decreasing with pressure - check the z-factor correlation.'); break; }
+    }
+    m.gas.forEach(function (g) {
+      if (g.z < 0.2 || g.z > 2.0) w.push('z-factor of ' + g.z.toFixed(3) + ' at ' + g.p.toFixed(0) + ' psia is outside a physical range.');
+    });
+    return w;
+  }
+
+  function buildAny(userInput) {
+    return userInput && userInput.fluid === 'gas' ? buildGas(userInput) : build(userInput);
+  }
+
+  return { build: buildAny, buildOil: build, buildGas: buildGas, DEFAULTS: DEFAULTS,
+           pressureGrid: pressureGrid, rsbFromPb: rsbFromPb };
 });

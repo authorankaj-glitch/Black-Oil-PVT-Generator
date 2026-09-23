@@ -19,7 +19,22 @@ confidential.
 |---|---|
 | Oil | P<sub>b</sub>, R<sub>s</sub>(p), B<sub>o</sub>(p), &mu;<sub>o</sub>(p), &rho;<sub>o</sub>(p), c<sub>o</sub>(p) — saturated and undersaturated branches |
 | Gas | z(p), B<sub>g</sub>(p), &rho;<sub>g</sub>(p), c<sub>g</sub>(p), &mu;<sub>g</sub>(p), pseudo-criticals with non-hydrocarbon corrections |
-| Water | B<sub>w</sub>(p), &mu;<sub>w</sub>(p), c<sub>w</sub>(p), &rho;<sub>w</sub>(p) at a given salinity |
+| Water | B<sub>w</sub>(p), &mu;<sub>w</sub>(p), c<sub>w</sub>(p), &rho;<sub>w</sub>(p) at a given brine salinity |
+
+The page has two fluid systems, chosen with the **Oil reservoir / Gas
+reservoir** switch at the top of the input panel. Each keeps its own inputs, so
+flipping between them loses nothing.
+
+| Fluid system | Gas type | What is modelled |
+|---|---|---|
+| Oil reservoir | &mdash; | black oil with its solution gas (tables above) |
+| Gas reservoir | Dry gas | z, B<sub>g</sub>, E<sub>g</sub>, &rho;<sub>g</sub>, c<sub>g</sub>, &mu;<sub>g</sub> of the separator gas; no liquid anywhere |
+| Gas reservoir | Wet gas | the same, for the reservoir gas recombined with its condensate; liquid forms only at the separator |
+
+Retrograde **gas condensates are out of scope**: below a dew point, the liquid
+drop-out and R<sub>v</sub>(p) cannot be had from black-oil correlations &mdash;
+they need a CCE/CVD study or a compositional model. A CGR above about
+50 STB/MMscf raises a QC warning for exactly that reason.
 
 ## Inputs
 
@@ -29,11 +44,18 @@ reservoir temperature, and either the solution GOR at the bubble point
 
 **Optional:** separator pressure and temperature (used by the Vasquez–Beggs gas
 gravity correction), CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub> mole fractions,
-brine salinity, rock compressibility and reference pressure, the pressure range
+brine salinity (ppm NaCl, as a water analysis reports it), rock compressibility
+and reference pressure, the pressure range
 and node count of the table, and measured P<sub>b</sub>, B<sub>ob</sub> and dead-oil
 viscosity for calibration.
 
-Six fluid presets (light, medium, heavy, volatile, sour, North Sea) load a
+**Gas reservoir:** separator gas gravity, reservoir temperature, separator
+conditions, CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub>, and the gas type. A wet
+gas adds the condensate-gas ratio (CGR, STB/MMscf) and the stock-tank condensate
+gravity.
+
+Six oil presets (light, medium, heavy, volatile, sour, North Sea) and six gas
+presets (dry, deep dry, wet, rich wet, sour wet, nitrogen-rich) load a
 representative input set in one click. Inputs and the chosen unit system persist
 in browser storage, and **Copy link to this case** puts the whole case in the URL
 so it can be shared with a colleague.
@@ -67,7 +89,36 @@ failing silently.
 ### Water
 
 McCain (1991) for B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) for c<sub>w</sub>,
-with salinity entered as weight-percent NaCl equivalent.
+with salinity entered in **ppm NaCl equivalent** (mg NaCl per kg of brine), the
+way a water analysis reports it; the correlations take weight percent, so the
+page converts with wt % = ppm / 10 000 and every deck header states both. The
+`Model.build()` API still takes `salinity` as weight percent.
+
+## Gas reservoirs
+
+All gas properties are reported per standard volume of **separator** gas, the
+basis ECLIPSE `PVDG` and CMG `*PVTG` use. Both gas types are single-phase in the
+reservoir at every table pressure.
+
+1. **Recombination** (McCain, 1990; Gold, McCain & Jennings, 1989). With
+   R = 10<sup>6</sup>/CGR scf/STB, &gamma;<sub>o</sub> the condensate specific
+   gravity and M<sub>o</sub> = 5954/(API &minus; 8.811):
+   &gamma;<sub>w</sub> = (R&gamma;<sub>g</sub> + 4584&gamma;<sub>o</sub>) /
+   (R + 132800&gamma;<sub>o</sub>/M<sub>o</sub>). A dry gas is its own reservoir
+   gas.
+2. **Gas properties** of the reservoir gas: pseudo-criticals of
+   &gamma;<sub>w</sub> (Sutton, or Standing's dry/wet curve), the selected
+   non-hydrocarbon correction, then z, &rho;<sub>g</sub>, c<sub>g</sub> and
+   &mu;<sub>g</sub> exactly as in oil mode.
+3. **B<sub>g</sub> on the separator basis** = B<sub>g</sub>(well stream)
+   &times; (1 + V<sub>eq</sub>&middot;CGR/10<sup>6</sup>), where
+   V<sub>eq</sub> = 132800&gamma;<sub>o</sub>/M<sub>o</sub> scf/STB is the
+   gas-equivalent volume of the condensate. The well-stream B<sub>g</sub> is in
+   the table too, and E<sub>g</sub> = 1/B<sub>g</sub> is what the CMG deck
+   carries.
+4. **Surface condensate** from a wet gas is the gas rate &times; CGR;
+   R<sub>v</sub> stays at the CGR at every reservoir pressure, because nothing
+   condenses before the separator.
 
 ## Cursor-linked fluid visuals
 
@@ -93,6 +144,16 @@ rising through the liquid in proportion to how much gas has come out of
 solution. Above P<sub>b</sub> the cap is empty and the specks are at full
 density &mdash; every scf is still dissolved. The animation is suppressed under
 `prefers-reduced-motion`.
+
+### The gas barrel (Gas reservoir mode)
+
+The reservoir gas that 1 Mscf of separator gas occupies, held at the cursor
+pressure &mdash; again a constant-composition expansion. Gas molecules are drawn
+at a density that follows &rho;<sub>g</sub>(p), so the gas visibly thins as it
+expands, and the readout gives z, B<sub>g</sub>, E<sub>g</sub>,
+&rho;<sub>g</sub>, &mu;<sub>g</sub>, R<sub>v</sub> and V/V<sub>i</sub>. Nothing
+condenses inside the barrel: a dry gas drops no liquid at all, and a wet gas
+yields its condensate at the separator, which the labels say.
 
 ### The phase envelope
 
@@ -125,6 +186,20 @@ construction is:
 Read it as a teaching diagram and a fluid-type classifier, not as a measured
 envelope: the bubble point it passes through is real, the shape around it is
 not.
+
+In **Gas reservoir** mode there is no saturation pressure to anchor to, so the
+envelope is sized from the gas pseudo-critical properties (T<sub>c</sub> =
+T<sub>pc</sub>, P<sub>c</sub> a little above P<sub>pc</sub> &mdash; a mixture's
+true critical pressure always exceeds its pseudo-critical pressure), and the
+separator conditions are plotted as a second point:
+
+* **Wet gas** &mdash; the cricondentherm sits between separator and reservoir
+  temperature: the reservoir path stays single-phase while the separator point
+  falls inside the envelope, which is where the condensate comes from.
+* **Dry gas** &mdash; the same construction with the cricondentherm below the
+  separator temperature: neither point touches the envelope.
+
+It places the fluid; it does not measure it.
 
 ## Calculation sequence
 
@@ -179,9 +254,16 @@ study is available.
 | Format | Contents | Units |
 |---|---|---|
 | ECLIPSE / OPM Flow / tNavigator (`.INC`) | `DENSITY`, `PVTO`, `PVDG`, `PVTW`, `ROCK` | `FIELD` (R<sub>s</sub> in Mscf/STB, B<sub>g</sub> in rb/Mscf) or `METRIC` (sm³/sm³, rm³/sm³, barsa) |
+| ECLIPSE &mdash; dry / wet gas | `DENSITY`, `PVDG` (separator-gas basis), `PVTW`, `ROCK`; phases `GAS WATER` | as above |
+| CMG IMEX &mdash; dry gas | `*MODEL *GASWATER`, `*RESERVOIR *GAS`, `*DENSITY *GAS`/`*WATER`, `*PVTG` (p, E<sub>g</sub>, &mu;<sub>g</sub>), water and rock sections | `*INUNIT *FIELD` (psi) or `*SI` (kPa); E<sub>g</sub> is a volume ratio in both |
+| CMG IMEX &mdash; wet gas | `*MODEL *GASWATER_WITH_CONDENSATE`, `*DENSITY *OIL` as well, `*PVTG *RV` (p, E<sub>g</sub>, R<sub>v</sub>, &mu;<sub>g</sub>) | R<sub>v</sub> in STB/MMscf (`FIELD`) or m³/m³ (`SI`) |
 | CMG IMEX / GEM (`.dat`) | `*MODEL *BLACKOIL`, `*PVT *BG`, `*CO`, `*CVO`, `*DENSITY`, `*REFPW`/`*BWI`/`*CW`/`*VWI`/`*CVW`, `*CPOR`/`*PRPOR` | `*INUNIT *FIELD` (E<sub>g</sub> in ft³/bbl) or `*INUNIT *SI` |
-| CSV | every property at every pressure node | field units |
+| CSV | every property at every pressure node (gas mode adds R<sub>v</sub>, E<sub>g</sub> and the well-stream B<sub>g</sub>) | field units |
 | JSON | the complete model, for scripting and QC | field units |
+
+The gas-mode CMG deck follows the `*GASWATER` / `*GASWATER_WITH_CONDENSATE`
+keyword set. CMG keyword sets vary between IMEX versions, so check the deck on
+import into Builder the first time.
 
 Every export carries a header recording the inputs, the correlations used, the
 generation timestamp and any QC warnings, so a deck can be traced back to the
@@ -220,25 +302,36 @@ console.log(Exp.eclipse(m, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-140 checks covering reference values for each correlation, the physical
+187 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
 for every export format, a sweep of 849 fluid/correlation combinations, the
 barrel volume balance (no free gas at P<sub>b</sub>, fractions summing to one,
 monotonic gas evolution below P<sub>b</sub>) and the phase-envelope anchoring for
-every preset fluid.
+every preset fluid. The gas-reservoir checks cover the McCain recombination,
+the separator-basis B<sub>g</sub> and E<sub>g</sub> = 1/B<sub>g</sub>, the
+single-phase barrel, the fluid-type classification and separator placement of
+each envelope, the ECLIPSE `PVDG` and CMG `*PVTG` / `*PVTG *RV` deck structure
+and units, and a sweep of 192 gas cases.
 
 ## Limitations
 
 * Correlations carry roughly 5–20% uncertainty on B<sub>o</sub> and
   R<sub>s</sub>, and considerably more on viscosity. They are a starting point,
   not a substitute for a CCE/DL/separator study.
-* The gas table is a dry-gas `PVDG`: no vaporised oil (R<sub>v</sub>). Gas
-  condensates and volatile oils need a compositional or modified black-oil model.
+* In oil mode the gas table is a dry-gas `PVDG`: no vaporised oil
+  (R<sub>v</sub>), so volatile oils need a compositional or modified black-oil
+  model.
+* Gas mode covers dry and wet gas only. A retrograde gas condensate is not
+  modelled: below a dew point the liquid drop-out and R<sub>v</sub>(p) need a
+  CCE/CVD study or a compositional model.
+* CMG keyword sets vary between IMEX versions; check a generated gas deck on
+  first import into Builder.
 * Water is treated as undersaturated (no dissolved gas), matching `PVTW`.
-* The phase envelope is schematic (see above). Only the bubble point it passes
-  through is calculated; the rest of the shape is constructed.
+* The phase envelope is schematic (see above). In oil mode only the bubble point
+  it passes through is calculated; in gas mode nothing on it is &mdash; it is
+  placed from the pseudo-critical properties.
 * Surface conditions are 14.696 psia and 60 °F. Metric output uses the
   conventional volume-ratio conversions and does not re-reference to 15 °C.
 
@@ -246,7 +339,7 @@ every preset fluid.
 
 Standing (1947); Beal (1946); Carr, Kobayashi & Burrows (1954); Lasater (1958);
 Chew & Connally (1959); Dempsey (1965); Lee, Gonzalez & Eakin (1966); Wichert &
-Aziz (1972); Hall & Yarborough (1973); Beggs & Brill (1973); Dranchuk &
+Aziz (1972); Gold, McCain & Jennings (1989); McCain (1990); Hall & Yarborough (1973); Beggs & Brill (1973); Dranchuk &
 Abou-Kassem (1975); Beggs & Robinson (1975); Glaso (1980); Vasquez & Beggs
 (1980); Ng & Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain, Rollins &
 Villena-Lanzi (1988); Osif (1988); McCain (1991); Petrosky & Farshad (1993).
