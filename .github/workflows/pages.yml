@@ -1,9 +1,12 @@
-# Publishes the static site to GitHub Pages, but only after the PVT test
-# suite passes -- a broken correlation should never reach the live page.
+# Runs the PVT test suite on every pull request, and on a push to main
+# publishes the static site to GitHub Pages -- but only after that suite
+# passes, so a broken correlation never reaches the live page.
 name: Deploy to GitHub Pages
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -13,9 +16,11 @@ permissions:
   id-token: write
 
 # Let a running deployment finish rather than cancelling it half-published.
+# Pull-request runs get their own group per branch, so a new push to a PR
+# cancels that PR's previous run without ever touching a live deployment.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('pvt-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -32,6 +37,8 @@ jobs:
   deploy:
     name: Deploy
     needs: test
+    # a pull request runs the tests only; nothing is published until it lands
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
