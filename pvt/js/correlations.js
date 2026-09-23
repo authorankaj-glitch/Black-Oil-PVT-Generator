@@ -410,8 +410,40 @@
   };
 
   /* ------------------------------------------------------------------ *
+   * 5b. Wet gas and gas condensate: recombination of the separator gas
+   *     with the condensate it yields (McCain, 1990; Gold et al., 1989).
+   *     cgr in STB/MMscf of separator gas, apiC the stock-tank condensate
+   *     gravity.
+   * ------------------------------------------------------------------ */
+
+  /* Stock-tank condensate molecular weight, lbm/lbmol (McCain, 1990):
+     Mo = 5954 / (API - 8.811) = 42.43 gamma_o / (1.008 - gamma_o). */
+  function condensateMW(apiC) { return 5954 / (apiC - 8.811); }
+
+  /* Gas-equivalent volume of one STB of condensate, scf/STB
+     (ideal-gas volume of its moles at 14.696 psia, 60 degF). */
+  function condensateGasEquivalent(apiC) {
+    return 132800 * apiToSg(apiC) / condensateMW(apiC);
+  }
+
+  /* Reservoir (well-stream) gas gravity from separator gas + condensate. */
+  function wellstreamGravity(gammaG, cgr, apiC) {
+    if (!(cgr > 0)) return gammaG;
+    var R = 1e6 / cgr;                     /* scf of separator gas per STB */
+    var gO = apiToSg(apiC);
+    return (R * gammaG + 4584 * gO) / (R + condensateGasEquivalent(apiC));
+  }
+
+  /* Well-stream scf per scf of separator gas: converts a well-stream Bg
+     into the separator-gas (dry-gas) basis simulators use in PVDG/PVTG. */
+  function wellstreamFactor(cgr, apiC) {
+    if (!(cgr > 0)) return 1;
+    return 1 + condensateGasEquivalent(apiC) * cgr / 1e6;
+  }
+
+  /* ------------------------------------------------------------------ *
    * 6. Formation water (McCain, 1991 / Osif, 1988 / Meehan)
-   *    salinity in weight % NaCl equivalent
+   *    salinity in weight % NaCl equivalent (ppm / 10 000)
    * ------------------------------------------------------------------ */
   function waterBw(p, tempF) {
     var dVt = -1.0001e-2 + 1.33391e-4 * tempF + 5.50654e-7 * tempF * tempF;
@@ -468,6 +500,8 @@
     pseudoCriticals: pseudoCriticals, wichertAziz: wichertAziz,
     gasZ: gasZ, gasBg: gasBg, gasDensity: gasDensity,
     gasCompressibility: gasCompressibility,
+    condensateMW: condensateMW, condensateGasEquivalent: condensateGasEquivalent,
+    wellstreamGravity: wellstreamGravity, wellstreamFactor: wellstreamFactor,
     /* water */
     waterBw: waterBw, waterDensitySC: waterDensitySC,
     waterViscosity: waterViscosity, waterCompressibility: waterCompressibility,

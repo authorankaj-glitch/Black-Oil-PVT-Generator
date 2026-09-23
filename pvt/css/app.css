@@ -76,6 +76,8 @@
 }
 
 * { box-sizing: border-box; }
+/* author display rules (.field is a grid) would otherwise override the hidden attribute */
+[hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; }
 body {
   background: var(--page);
@@ -311,6 +313,14 @@ footer.foot { color: var(--text-muted); font-size: 12px; padding: 0 20px 28px; m
 .barrel-state { fill: var(--text-secondary); font-size: 12px; }
 .key-swatch.key-oil { fill: var(--slot-1); }
 .key-swatch.key-gas { fill: var(--slot-2); }
+.key-swatch.key-cond { fill: var(--slot-4); }
+
+/* gas barrel: reservoir gas, drawn at a molecule density that follows rho_g */
+.barrel-gas-fill { fill: var(--slot-2); opacity: 0.16; }
+.gas-molecules circle { fill: var(--slot-2); transition: opacity 0.25s; }
+@media (prefers-reduced-motion: reduce) {
+  .gas-molecules circle { transition: none; }
+}
 
 .readout { display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; margin: 4px 0 8px; }
 .readout dt { font-size: 12.5px; color: var(--text-secondary); }
@@ -335,6 +345,11 @@ footer.foot { color: var(--text-muted); font-size: 12px; padding: 0 20px 28px; m
 .cursor-halo { stroke: none; opacity: 0.22; }
 .cursor-halo.is-liquid { fill: var(--slot-1); }
 .cursor-halo.is-twophase { fill: var(--slot-2); }
+.cursor-dot.is-gas { fill: var(--slot-2); }
+.cursor-halo.is-gas { fill: var(--slot-2); }
+.phase-fill.gas { fill: var(--slot-2); opacity: 0.10; }
+.sep-dot { fill: var(--surface-1); stroke: var(--text-secondary); stroke-width: 2; }
+.legend-key.key-sep { width: 9px; height: 9px; background: transparent; border: 2px solid var(--text-secondary); border-radius: 2px; }
 .cursor-chip { fill: var(--surface-1); }
 .cursor-label { fill: var(--text-primary); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .cursor-sublabel { fill: var(--text-secondary); font-size: 11px; }
@@ -345,3 +360,7 @@ footer.foot { color: var(--text-muted); font-size: 12px; padding: 0 20px 28px; m
 /* labels sitting on the filled envelope get a surface-coloured halo so they
    stay legible without a box */
 .halo-text { paint-order: stroke; stroke: var(--surface-1); stroke-width: 3.5; stroke-linejoin: round; }
+
+/* oil / gas reservoir switch: full width of the sidebar */
+.fluid-seg { display: flex; width: 100%; }
+.fluid-seg button { flex: 1 1 50%; padding: 8px 10px; }
