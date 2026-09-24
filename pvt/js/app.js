@@ -9,12 +9,17 @@
  * Inputs are held in FIELD units internally; the unit toggle converts what is
  * shown (inputs, charts, tables) and the export panel writes decks in either
  * unit system independently.
+ *
+ * Laboratory data (Lab data & tuning tab) is held per fluid, also in field
+ * units. With tuning switched on, every recompute regresses the selected
+ * correlations against it (tuning.js) and the tuned model feeds the charts,
+ * tables and exports; the untuned model is kept for the match charts.
  */
 (function () {
   'use strict';
 
   var C = window.PVTCorr, Model = window.PVTModel, Exp = window.PVTExport, Chart = window.PVTChart;
-  var FS = window.PVTFluidState, Vis = window.PVTVisuals;
+  var FS = window.PVTFluidState, Vis = window.PVTVisuals, Tune = window.PVTTuning;
   var $ = function (id) { return document.getElementById(id); };
 
   /* ---------------- unit handling ---------------- */
@@ -60,7 +65,7 @@
     api: null, gammaG: null, tempF: 'T', rsb: 'rs', pbMeas: 'p', pSepPsia: 'p',
     tSepF: 'T', yCO2: null, yH2S: null, yN2: null, salinity: null,
     pRefRock: 'p', rockComp: 'c', pMin: 'p', pMax: 'p', nSat: null, nUnsat: null,
-    calPb: 'p', calBob: 'bo', calMuod: 'mu',
+    labPb: 'p', labMuod: 'mu',
     cgr: 'cgr', apiC: null
   };
 
@@ -147,7 +152,7 @@
         pcrit: $('cPcrit').value, inertCorr: $('cInert').value,
         z: $('cZ').value, mug: $('cMug').value
       },
-      calib: { pbMeas: toField('calPb'), bobMeas: toField('calBob'), muodMeas: toField('calMuod') }
+      lab: labForModel(), tune: lab[fluid].tune
     };
   }
 
@@ -229,6 +234,11 @@
   function renderQc() {
     var qc = $('qc');
     qc.textContent = '';
+    if (model.tuning && regression) {
+      var n = regression.data.rows.length + (regression.data.pb ? 1 : 0) + (regression.data.muod ? 1 : 0);
+      qc.appendChild(notice('info', 'i', 'These tables are tuned to ' + n + ' laboratory value' +
+        (n === 1 ? '' : 's') + ' - the Lab data & tuning tab shows the multipliers and the fit.'));
+    }
     if (!model.warnings.length) {
       qc.appendChild(notice('ok', '✓', 'All inputs lie inside the published range of the selected correlations, and the generated tables pass the monotonicity checks a simulator applies.'));
     } else {
@@ -840,6 +850,568 @@
     tbl.appendChild(tb);
   }
 
+  /* ================================================================ *
+   * Laboratory data, correlation ranking and tuning
+   * ================================================================ */
+
+  /* Columns of the laboratory table; kind drives the unit conversion. */
+  var LAB_COLS = {
+    oil: [
+      { k: 'p', kind: 'p', head: 'Pressure' },
+      { k: 'rs', kind: 'rs', head: 'Rs' },
+      { k: 'bo', kind: 'bo', head: 'Bo' },
+      { k: 'muo', kind: 'mu', head: 'Oil viscosity' },
+      { k: 'z', kind: null, head: 'Gas z' },
+      { k: 'mug', kind: 'mu', head: 'Gas viscosity' }
+    ],
+    gas: [
+      { k: 'p', kind: 'p', head: 'Pressure' },
+      { k: 'z', kind: null, head: 'z-factor' },
+      { k: 'mug', kind: 'mu', head: 'Gas viscosity' }
+    ]
+  };
+  /* correlation family -> sidebar select */
+  var CORR_SELECT = { pb: 'cPb', bo: 'cBo', co: 'cCo', muod: 'cMuod', muob: 'cMuob',
+                      muou: 'cMuou', z: 'cZ', pcrit: 'cPcrit', mug: 'cMug' };
+  var CORR_NAMES = {
+    standing: 'Standing', vasquezBeggs: 'Vasquez-Beggs', glaso: 'Glaso', alMarhoun: 'Al-Marhoun',
+    petroskyFarshad: 'Petrosky-Farshad', lasater: 'Lasater', mccain: 'McCain',
+    beggsRobinson: 'Beggs-Robinson', beal: 'Beal', ngEgbogah: 'Ng-Egbogah',
+    chewConnally: 'Chew-Connally', none: 'Constant above Pb', dak: 'Dranchuk-Abou-Kassem',
+    hallYarborough: 'Hall-Yarborough', beggsBrill: 'Beggs-Brill', sutton: 'Sutton',
+    leeGonzalezEakin: 'Lee-Gonzalez-Eakin', carrKobayashiBurrows: 'Carr-Kobayashi-Burrows'
+  };
+
+  function emptyLab() { return { pb: null, muod: null, rows: [], tune: false }; }
+  var lab = { oil: emptyLab(), gas: emptyLab() };
+  var baseModel = null, regression = null, tuneError = null;
+  var screenResult = null, screenKey = null, screening = false;
+
+  function finiteOrNull(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
+  function cleanLab(o) {
+    o = o || {};
+    return {
+      pb: finiteOrNull(o.pb), muod: finiteOrNull(o.muod), tune: !!o.tune,
+      rows: (o.rows || []).map(function (r) {
+        var out = {};
+        ['p', 'rs', 'bo', 'muo', 'z', 'mug'].forEach(function (k) { out[k] = finiteOrNull(r[k]); });
+        return out;
+      })
+    };
+  }
+
+  /* What the model and the regression receive: complete rows only. */
+  function labForModel() {
+    var L = lab[fluid];
+    return { pb: fluid === 'oil' ? L.pb : null, muod: fluid === 'oil' ? L.muod : null,
+             rows: L.rows.filter(function (r) { return r.p !== null; }) };
+  }
+
+  /* Restore laboratory data from a saved or shared case. Cases saved before
+     the lab table existed carry a three-value calibration: carry it over. */
+  function restoreLab(o) {
+    var f = o.fluid === 'gas' ? 'gas' : 'oil';
+    if (o.lab) {
+      lab[f] = cleanLab(o.lab);
+      lab[f].tune = !!o.tune;
+    } else if (o.calib && (o.calib.pbMeas > 0 || o.calib.bobMeas > 0 || o.calib.muodMeas > 0)) {
+      var c = o.calib;
+      lab.oil = emptyLab();
+      lab.oil.pb = c.pbMeas > 0 ? c.pbMeas : null;
+      lab.oil.muod = c.muodMeas > 0 ? c.muodMeas : null;
+      if (c.bobMeas > 0 && c.pbMeas > 0) lab.oil.rows.push({ p: c.pbMeas, rs: null, bo: c.bobMeas, muo: null, z: null, mug: null });
+      lab.oil.tune = true;
+    }
+    if (f === fluid) { setInput('labPb', lab.oil.pb); setInput('labMuod', lab.oil.muod); }
+    renderLabTable();
+  }
+
+  /* Tuning handed to the model: the multipliers plus the fit summary the
+     deck header prints. */
+  function tuningPayload(reg) {
+    var out = {}, k;
+    for (k in reg.tuning) out[k] = reg.tuning[k];
+    out.fit = Tune.PROPS[fluid].filter(function (pr) { return reg.after[pr.key].n; }).map(function (pr) {
+      return { label: pr.label, n: reg.after[pr.key].n,
+               before: reg.before[pr.key].aare, after: reg.after[pr.key].aare };
+    });
+    return out;
+  }
+
+  /* ---------- the editable table ---------- */
+
+  function labCellText(col, v) { return v === null || v === undefined ? '' : trim(col.kind ? conv(col.kind, v) : v, col.kind); }
+  function labCellValue(col, str) {
+    var v = parseFloat(String(str).replace(/,/g, '').trim());
+    if (!isFinite(v)) return null;
+    return col.kind ? uu(col.kind).inv(v) : v;
+  }
+
+  function renderLabTable() {
+    var tbl = $('labTable');
+    if (!tbl) return;
+    var cols = LAB_COLS[fluid], L = lab[fluid];
+    while (L.rows.length < 3) L.rows.push({ p: null, rs: null, bo: null, muo: null, z: null, mug: null });
+    tbl.textContent = '';
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    cols.forEach(function (c) {
+      var h = document.createElement('th');
+      h.textContent = c.head + (c.kind ? ' (' + label(c.kind) + ')' : '');
+      hr.appendChild(h);
+    });
+    ['Branch', ''].forEach(function (t) { var h = document.createElement('th'); h.textContent = t; hr.appendChild(h); });
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    L.rows.forEach(function (r, i) {
+      var tr = document.createElement('tr');
+      cols.forEach(function (c, j) {
+        var td = document.createElement('td');
+        var inp = document.createElement('input');
+        inp.type = 'text'; inp.inputMode = 'decimal';
+        inp.value = labCellText(c, r[c.k]);
+        inp.setAttribute('aria-label', c.head + ', row ' + (i + 1));
+        inp.dataset.row = i; inp.dataset.col = j;
+        td.appendChild(inp); tr.appendChild(td);
+      });
+      var br = document.createElement('td');
+      br.className = 'lab-branch';
+      tr.appendChild(br);
+      var del = document.createElement('td');
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'ghost lab-del'; b.textContent = '✕';
+      b.dataset.row = i;
+      b.setAttribute('aria-label', 'Delete row ' + (i + 1));
+      del.appendChild(b); tr.appendChild(del);
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    updateBranches();
+  }
+
+  /* Which rows the regression treats as saturated and undersaturated. */
+  function updateBranches() {
+    var tbl = $('labTable');
+    if (!tbl || !model) return;
+    var split = fluid === 'oil' ? (regression && regression.pbSplit) || lab.oil.pb || model.pb : null;
+    tbl.querySelectorAll('tbody tr').forEach(function (tr, i) {
+      var r = lab[fluid].rows[i], cell = tr.querySelector('.lab-branch');
+      if (!cell) return;
+      cell.textContent = !r || r.p === null || split === null ? ''
+        : r.p <= split + 1e-6 ? 'saturated' : 'undersaturated';
+    });
+  }
+
+  /* Paste a block copied from a spreadsheet, starting at the focused cell. */
+  function pasteBlock(r0, c0, text) {
+    var cols = LAB_COLS[fluid], L = lab[fluid];
+    var lines = text.replace(/\r/g, '').split('\n').filter(function (l) { return l.trim() !== ''; });
+    lines.forEach(function (line, i) {
+      var cells = line.split('\t');
+      if (cells.length === 1) cells = line.split(/[;,]\s*/);
+      var r = r0 + i;
+      /* a header or unit row has no number in its first cell - skip it */
+      if (labCellValue(cols[c0] || cols[0], cells[0]) === null && i === 0 && lines.length > 1) { r0--; return; }
+      while (L.rows.length <= r) L.rows.push({ p: null, rs: null, bo: null, muo: null, z: null, mug: null });
+      cells.forEach(function (cell, j) {
+        var col = cols[c0 + j];
+        if (col) L.rows[r][col.k] = labCellValue(col, cell);
+      });
+    });
+    labChanged(true);
+  }
+
+  function labChanged(rebuildTable) {
+    if (rebuildTable) renderLabTable();
+    /* an earlier ranking stays on screen, marked stale by rankKey() */
+    schedule();
+  }
+
+  /* ---------- results: fit table, notes, match charts ---------- */
+
+  function fmtPct(v) { return v === null || v === undefined || !isFinite(v) ? '–' : v.toFixed(2) + ' %'; }
+
+  function renderLabResults() {
+    if (!$('labTable')) return;
+    updateBranches();
+    $('tuneOn').checked = !!lab[fluid].tune;
+    var has = Tune.hasData(labForModel(), fluid);
+    $('labStatus').textContent = has ? '' : 'Enter at least one laboratory value to rank or tune the correlations.';
+    $('btnRank').disabled = !has || screening;
+
+    /* fit table */
+    var tbl = $('tuneTable'), notes = $('tuneNotes');
+    tbl.textContent = ''; notes.textContent = '';
+    var cmp = has ? Tune.compare(Model.build(Object.assign({}, baseModel.input, { pointsOnly: true, tuning: null })),
+      Tune.normalize(labForModel(), fluid), fluid === 'oil' ? lab.oil.pb || baseModel.pb : undefined) : null;
+    if (tuneError) notes.appendChild(notice('error', '✕', 'The regression failed: ' + tuneError));
+    if (has) {
+      var th = document.createElement('thead'), hr = document.createElement('tr');
+      ['Property', 'Points', 'Untuned AARE', 'Tuned AARE', 'Max error, tuned'].forEach(function (h) {
+        var e = document.createElement('th'); e.textContent = h; hr.appendChild(e);
+      });
+      th.appendChild(hr); tbl.appendChild(th);
+      var tb = document.createElement('tbody');
+      Tune.PROPS[fluid].forEach(function (pr) {
+        var b = cmp[pr.key], a = regression ? regression.after[pr.key] : null;
+        if (!b.n && !(a && a.n)) return;
+        var tr = document.createElement('tr');
+        [pr.label, String(a ? a.n : b.n), fmtPct(b.aare), a ? fmtPct(a.aare) : '–',
+         a ? fmtPct(a.maxAre) : '–'].forEach(function (t) {
+          var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      if (regression && regression.params.length) {
+        var gr = document.createElement('tr');
+        gr.className = 'group-row';
+        var gtd = document.createElement('td'); gtd.colSpan = 5; gtd.textContent = 'Regressed multipliers';
+        gr.appendChild(gtd); tb.appendChild(gr);
+        regression.params.forEach(function (q) {
+          var tr = document.createElement('tr');
+          if (q.atBound) tr.className = 'at-bound';
+          [q.label, String(q.points), '', '× ' + q.value.toFixed(4), q.atBound ? 'at search limit' : ''].forEach(function (t) {
+            var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+          });
+          tb.appendChild(tr);
+        });
+      }
+      tbl.appendChild(tb);
+    }
+    if (regression) regression.notes.forEach(function (n) { notes.appendChild(notice('warn', '!', n)); });
+    if (has && !lab[fluid].tune) {
+      notes.appendChild(notice('info', 'i', 'Tuning is off: the tables and exports use the published correlations. Switch it on to apply the regressed multipliers.'));
+    }
+
+    renderScreen();
+    renderMatchCharts(has);
+  }
+
+  function renderMatchCharts(has) {
+    var host = $('labCharts');
+    host.textContent = '';
+    if (!has) return;
+    var data = Tune.normalize(labForModel(), fluid);
+    var defs = fluid === 'oil' ? [
+      { col: 'rs', src: 'oil', title: 'Solution GOR', kind: 'rs', slot: 1 },
+      { col: 'bo', src: 'oil', title: 'Oil formation volume factor', kind: 'bo', slot: 1 },
+      { col: 'muo', src: 'oil', title: 'Oil viscosity', kind: 'mu', slot: 1 },
+      { col: 'z', src: 'gas', title: 'Gas z-factor', kind: null, slot: 2 },
+      { col: 'mug', src: 'gas', title: 'Gas viscosity', kind: 'mu', slot: 2 }
+    ] : [
+      { col: 'z', src: 'gas', title: 'Gas z-factor', kind: null, slot: 2 },
+      { col: 'mug', src: 'gas', title: 'Gas viscosity', kind: 'mu', slot: 2 }
+    ];
+    var tuned = model !== baseModel;
+    defs.forEach(function (d) {
+      var pts = data.rows.filter(function (r) { return r[d.col] !== null; });
+      if (!pts.length) return;
+      var curve = function (m) {
+        return m[d.src].map(function (r) { return { x: conv('p', r.p), y: kindConv(d.kind, r[d.col]) }; });
+      };
+      var series = [];
+      if (tuned) series.push({ name: 'Tuned', slot: d.slot, points: curve(model) });
+      series.push({ name: tuned ? 'Untuned' : 'Correlation', slot: tuned ? 7 : d.slot, dashed: tuned, points: curve(baseModel) });
+      series.push({ name: 'Laboratory', slot: 8, scatter: true, points: pts.map(function (r) {
+        return { x: conv('p', r.p), y: kindConv(d.kind, r[d.col]) };
+      }) });
+      chartInto(host, 'lab_' + d.col, {
+        title: d.title, subtitle: 'Laboratory points against the ' + (tuned ? 'tuned and untuned correlations' : 'selected correlation'),
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: kindLabel(d.kind), xUnit: label('p'),
+        series: series, marker: satMarker(), endLabels: false,
+        onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
+        fmtX: function (v) { return v.toFixed(uu('p').d); },
+        fmtY: function (v) { var k = kindDigits(d.kind); return k < 0 ? v.toExponential(3) : v.toFixed(k); }
+      });
+    });
+  }
+
+  /* ---------- correlation ranking ---------- */
+
+  /* The ranking depends on the fluid description and the data, not on which
+     correlations are selected at the moment - it varies those itself. */
+  function rankKey() {
+    var i = readInputs();
+    return JSON.stringify([i.fluid, i.api, i.gammaG, i.tempF, i.spec, i.rsb, i.pbMeas, i.tSepF, i.pSepPsia,
+      i.gasType, i.gasKind, i.cgr, i.apiC, i.yCO2, i.yH2S, i.yN2, i.lab]);
+  }
+
+  function runRanking() {
+    if (screening || !baseModel) return;
+    var inp = readInputs(), fams = Tune.FAMILIES[inp.fluid], out = [], k = 0;
+    var key = rankKey();
+    screening = true;
+    $('btnRank').disabled = true;
+    var step = function () {
+      if (k >= fams.length) {
+        screening = false;
+        screenResult = out; screenKey = key;
+        $('rankStatus').textContent = '';
+        renderLabResults();
+        return;
+      }
+      $('rankStatus').textContent = 'Ranking ' + fams[k].label.toLowerCase() + '…';
+      try {
+        var r = Tune.screenFamily(inp, inp.lab, fams[k]);
+        if (r) out.push(r);
+      } catch (e) { /* a family that cannot be evaluated is left out */ }
+      k++;
+      setTimeout(step, 0);   /* let the page repaint between families */
+    };
+    setTimeout(step, 0);
+  }
+
+  /* Which curves the ranking charts draw: the published correlations or
+     each one after its own tuning. */
+  var rankCurveMode = 'raw';
+
+  /* Chart of one family: every candidate on a common pressure grid (so the
+     tooltip compares them at the same pressure) and the laboratory points.
+     Curves are cached on the family, per mode, in field units. */
+  var RANK_PLOT = {
+    pb: { col: 'rs', kind: 'rs', title: 'Solution GOR' },
+    bo: { col: 'bo', kind: 'bo', title: 'Oil formation volume factor' },
+    co: { col: 'bo', kind: 'bo', title: 'Oil formation volume factor' },
+    muod: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    muob: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    muou: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    z: { col: 'z', kind: null, title: 'Gas z-factor' },
+    pcrit: { col: 'z', kind: null, title: 'Gas z-factor' },
+    mug: { col: 'mug', kind: 'mu', title: 'Gas viscosity' }
+  };
+
+  function familyCurves(fam, inp, data) {
+    fam.curves = fam.curves || {};
+    if (fam.curves[rankCurveMode]) return fam.curves[rankCurveMode];
+    var plot = RANK_PLOT[fam.corr], part = plot.col === 'z' || plot.col === 'mug' ? 'gas' : 'oil';
+    var lo = inp.pMin, hi = inp.pMax;
+    data.rows.forEach(function (r) { lo = Math.min(lo, r.p); hi = Math.max(hi, r.p); });
+    if (data.pb) hi = Math.max(hi, data.pb);
+    var grid = [], n = 60, i;
+    for (i = 0; i <= n; i++) grid.push(lo + (hi - lo) * i / n);
+    var out = {};
+    fam.rows.forEach(function (r) {
+      var ci = JSON.parse(JSON.stringify(inp));
+      ci.corr[fam.corr] = r.corr;
+      ci.tuning = rankCurveMode === 'tuned' ? r.tuning : null;
+      ci.pointsOnly = true;
+      try {
+        var m = Model.build(ci);
+        out[r.corr] = grid.map(function (p) { return { p: p, v: m.at(p, part)[plot.col] }; })
+          .filter(function (q) { return isFinite(q.v); });
+      } catch (e) { out[r.corr] = []; }
+    });
+    fam.curves[rankCurveMode] = out;
+    return out;
+  }
+
+  function familyChart(host, fam, sel, inp) {
+    var plot = RANK_PLOT[fam.corr];
+    var data = Tune.normalize(inp.lab, inp.fluid);
+    var curves = familyCurves(fam, inp, data);
+    var labPts = data.rows.filter(function (r) { return r[plot.col] !== null; })
+      .map(function (r) { return { p: r.p, v: r[plot.col] }; });
+    /* the scalar measurements belong on the chart of the family they tune */
+    if (fam.corr === 'pb' && data.pb && inp.spec !== 'pb' && inp.rsb > 0) labPts.push({ p: data.pb, v: inp.rsb });
+    if (fam.corr === 'muod' && data.muod) labPts.push({ p: 14.696, v: data.muod });
+    labPts.sort(function (a, b) { return a.p - b.p; });
+
+    /* the selected correlation first (it drives the tooltip), drawn bold */
+    var order = fam.rows.map(function (r) { return r.corr; }).sort(function (a, b) {
+      return (b === sel) - (a === sel);
+    });
+    var series = order.map(function (c) {
+      var k = fam.rows.map(function (r) { return r.corr; }).indexOf(c);
+      var tags = [];
+      if (c === fam.best) tags.push('best');
+      if (c === sel) tags.push('selected');
+      return {
+        name: (CORR_NAMES[c] || c) + (tags.length ? ' (' + tags.join(', ') + ')' : ''),
+        slot: (k % 7) + 1, bold: c === sel, muted: c !== sel,
+        points: curves[c].map(function (q) { return { x: conv('p', q.p), y: kindConv(plot.kind, q.v) }; })
+      };
+    }).filter(function (s) { return s.points.length; });
+    series.push({ name: 'Laboratory', slot: 8, scatter: true, points: labPts.map(function (q) {
+      return { x: conv('p', q.p), y: kindConv(plot.kind, q.v) };
+    }) });
+    chartInto(host, 'rank_' + fam.corr, {
+      title: plot.title,
+      subtitle: (rankCurveMode === 'tuned' ? 'Each correlation after its own tuning' : 'Published correlations, untuned') +
+        ', against the laboratory points',
+      xLabel: 'Pressure (' + label('p') + ')', yLabel: kindLabel(plot.kind), xUnit: label('p'),
+      series: series, endLabels: false,
+      onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
+      fmtX: function (v) { return v.toFixed(uu('p').d); },
+      fmtY: function (v) { var d = kindDigits(plot.kind); return d < 0 ? v.toExponential(3) : v.toFixed(d); }
+    });
+  }
+
+  function renderScreen() {
+    var host = $('rankResults'), useBtn = $('btnUseBest');
+    host.textContent = '';
+    var fresh = screenResult && screenKey === rankKey();
+    useBtn.hidden = !fresh;
+    $('rankCurves').hidden = !screenResult;
+    $('rankCurvesRaw').setAttribute('aria-pressed', String(rankCurveMode === 'raw'));
+    $('rankCurvesTuned').setAttribute('aria-pressed', String(rankCurveMode === 'tuned'));
+    if (!screenResult) { $('rankHint').textContent = ''; return; }
+    $('rankHint').textContent = fresh ? ''
+      : 'The fluid inputs or the laboratory data have changed since this ranking - rank again before using it.';
+    var inp = readInputs(), changes = 0;
+    screenResult.forEach(function (fam) {
+      var sel = inp.corr[fam.corr];
+      if (fam.best && fam.best !== sel) changes++;
+      var nPts = fam.rows.reduce(function (a, r) { return r.corr === (fam.best || sel) ? r.n : a; },
+        fam.rows[0] ? fam.rows[0].n : 0);
+
+      var block = document.createElement('div');
+      block.className = 'rank-family';
+      var head = document.createElement('h3');
+      head.textContent = fam.label + ' (' + nPts + ' point' + (nPts === 1 ? '' : 's') + ')';
+      block.appendChild(head);
+
+      /* with one or two points every candidate can be tuned to fit exactly;
+         say so, since the ranking then rests on the size of the adjustment */
+      var tuned = fam.rows.filter(function (r) { return r.aareTuned !== null; });
+      if (tuned.length > 1 && tuned.every(function (r) { return r.aareTuned < 0.1; })) {
+        var why = document.createElement('p');
+        why.className = 'hint';
+        why.textContent = 'Every correlation can be tuned to fit ' + (nPts === 1 ? 'this point' : 'these points') +
+          ' exactly, so the ranking goes to the one needing the smallest adjustment (multiplier closest to 1). ' +
+          'More laboratory points would separate them.';
+        block.appendChild(why);
+      }
+
+      var body = document.createElement('div');
+      body.className = 'rank-body';
+      var wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      var tbl = document.createElement('table');
+      var th = document.createElement('thead'), hr = document.createElement('tr');
+      ['Use', 'Correlation', 'Untuned AARE', 'Tuned AARE', 'Multiplier'].forEach(function (h) {
+        var e = document.createElement('th'); e.textContent = h; hr.appendChild(e);
+      });
+      th.appendChild(hr); tbl.appendChild(th);
+      var tb = document.createElement('tbody');
+      fam.rows.forEach(function (r) {
+        var tr = document.createElement('tr');
+        if (r.corr === sel) tr.className = 'is-selected';
+        var tdR = document.createElement('td');
+        var rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'rank-' + fam.corr; rb.value = r.corr;
+        rb.checked = r.corr === sel;
+        rb.dataset.family = fam.corr;
+        rb.id = 'rank-' + fam.corr + '-' + r.corr;
+        rb.setAttribute('aria-label', 'Use ' + (CORR_NAMES[r.corr] || r.corr) + ' for ' + fam.label.toLowerCase());
+        tdR.appendChild(rb); tr.appendChild(tdR);
+        var tdN = document.createElement('td');
+        var lb = document.createElement('label');
+        lb.htmlFor = rb.id;
+        lb.textContent = CORR_NAMES[r.corr] || r.corr;
+        tdN.appendChild(lb);
+        if (r.corr === fam.best) {
+          var badge = document.createElement('span');
+          badge.className = 'best-badge'; badge.textContent = 'best fit';
+          tdN.appendChild(badge);
+        }
+        tr.appendChild(tdN);
+        [fmtPct(r.aareRaw), fmtPct(r.aareTuned), r.mult ? '× ' + r.mult.toFixed(3) : '–'].forEach(function (t) {
+          var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      wrap.appendChild(tbl);
+      body.appendChild(wrap);
+      var chartHost = document.createElement('div');
+      body.appendChild(chartHost);
+      block.appendChild(body);
+      host.appendChild(block);
+      familyChart(chartHost, fam, sel, inp);
+    });
+    useBtn.disabled = !changes;
+    useBtn.textContent = changes ? 'Use the best-fitting correlations (' + changes + ' change' + (changes === 1 ? '' : 's') + ')'
+      : 'The best-fitting correlations are selected';
+  }
+
+  /* A choice in the ranking goes straight to the sidebar select, so the
+     tuning step - and the tables and exports - use it. */
+  function chooseCorrelation(family, name) {
+    if (!CORR_SELECT[family]) return;
+    $(CORR_SELECT[family]).value = name;
+    $('preset').value = '';
+    recompute();
+  }
+
+  function setRankCurves(mode) {
+    if (mode === rankCurveMode) return;
+    rankCurveMode = mode;
+    renderScreen();
+  }
+
+  function useBest() {
+    if (!screenResult) return;
+    screenResult.forEach(function (fam) {
+      if (fam.best && CORR_SELECT[fam.corr]) $(CORR_SELECT[fam.corr]).value = fam.best;
+    });
+    $('preset').value = '';
+    recompute();
+  }
+
+  function initLab() {
+    renderLabTable();
+    setInput('labPb', lab.oil.pb);
+    setInput('labMuod', lab.oil.muod);
+    var tbl = $('labTable');
+    tbl.addEventListener('input', function (ev) {
+      var t = ev.target;
+      if (t.dataset.row === undefined) return;
+      var col = LAB_COLS[fluid][+t.dataset.col];
+      lab[fluid].rows[+t.dataset.row][col.k] = labCellValue(col, t.value);
+      labChanged(false);
+    });
+    tbl.addEventListener('paste', function (ev) {
+      var t = ev.target, text = (ev.clipboardData || window.clipboardData).getData('text');
+      if (t.dataset.row === undefined || !/[\t\n]/.test(text.trim())) return;
+      ev.preventDefault();
+      pasteBlock(+t.dataset.row, +t.dataset.col, text);
+    });
+    tbl.addEventListener('click', function (ev) {
+      var b = ev.target.closest('.lab-del');
+      if (!b) return;
+      lab[fluid].rows.splice(+b.dataset.row, 1);
+      labChanged(true);
+    });
+    ['labPb', 'labMuod'].forEach(function (id) {
+      $(id).addEventListener('input', function () {
+        lab.oil[id === 'labPb' ? 'pb' : 'muod'] = toField(id);
+        labChanged(false);
+      });
+    });
+    $('btnAddRow').addEventListener('click', function () {
+      lab[fluid].rows.push({ p: null, rs: null, bo: null, muo: null, z: null, mug: null });
+      renderLabTable();
+      var cells = $('labTable').querySelectorAll('tbody tr:last-child input');
+      if (cells.length) cells[0].focus();
+    });
+    $('btnClearLab').addEventListener('click', function () {
+      var keep = lab[fluid].tune;
+      lab[fluid] = emptyLab(); lab[fluid].tune = keep;
+      if (fluid === 'oil') { setInput('labPb', null); setInput('labMuod', null); }
+      labChanged(true);
+    });
+    $('tuneOn').addEventListener('change', function (ev) {
+      lab[fluid].tune = ev.target.checked;
+      recompute();
+    });
+    $('btnRank').addEventListener('click', runRanking);
+    $('btnUseBest').addEventListener('click', useBest);
+    $('rankResults').addEventListener('change', function (ev) {
+      if (ev.target.type === 'radio' && ev.target.dataset.family) chooseCorrelation(ev.target.dataset.family, ev.target.value);
+    });
+    $('rankCurvesRaw').addEventListener('click', function () { setRankCurves('raw'); });
+    $('rankCurvesTuned').addEventListener('click', function () { setRankCurves('tuned'); });
+  }
+
   /* ---------------- export ---------------- */
   function renderExport() {
     var text = Exp.generate(model, $('fmtSel').value, $('fmtUnits').value);
@@ -909,17 +1481,31 @@
       if (!(inp.tempF > 32 && inp.tempF < 400)) throw new Error('Reservoir temperature must lie between 32 and 400 degF (0 - 204 degC).');
       if (!(inp.pMax > inp.pMin && inp.pMin > 0)) throw new Error('The maximum table pressure must exceed the minimum, and both must be positive.');
       if (inp.yCO2 + inp.yH2S + inp.yN2 >= 1) throw new Error('Non-hydrocarbon mole fractions must sum to less than 100%.');
-      model = Model.build(inp);
+      baseModel = Model.build(inp);
+      model = baseModel;
       say(null, null);
     } catch (e) {
       say('error', e.message);
       return;
+    }
+    /* regress the selected correlations against the laboratory data */
+    regression = null; tuneError = null;
+    if (inp.tune && Tune.hasData(inp.lab, inp.fluid)) {
+      try {
+        regression = Tune.regress(inp, inp.lab);
+        inp.tuning = tuningPayload(regression);
+        model = Model.build(inp);
+      } catch (e) {
+        regression = null; tuneError = e.message; model = baseModel;
+        delete inp.tuning;
+      }
     }
     renderSummary();
     renderCharts();
     renderVisuals();
     renderTable();
     renderCompare();
+    renderLabResults();
     renderExport();
     persist(inp);
   }
@@ -936,6 +1522,7 @@
       localStorage.setItem('pvt.inputs', JSON.stringify(inp));
       localStorage.setItem('pvt.units', units);
       localStorage.setItem('pvt.preset', $('preset').value);
+      localStorage.setItem('pvt.lab', JSON.stringify(lab));
     } catch (e) { /* private mode or blocked storage - the page still works */ }
   }
   function restore() {
@@ -948,6 +1535,12 @@
       try { loaded = JSON.parse(localStorage.getItem('pvt.inputs')); } catch (e) { loaded = null; }
     }
     try {
+      var saved = JSON.parse(localStorage.getItem('pvt.lab'));
+      if (saved && saved.oil && saved.gas) {
+        lab.oil = cleanLab(saved.oil); lab.gas = cleanLab(saved.gas);
+      }
+    } catch (e) { /* ignore */ }
+    try {
       var us = localStorage.getItem('pvt.units');
       if (us === 'metric' || us === 'field') units = us;
       var th = localStorage.getItem('pvt.theme');
@@ -957,7 +1550,9 @@
     applyModelInputs(loaded);
     return true;
   }
-  function applyModelInputs(o) {
+  /* keepLab: switching fluids keeps the live laboratory tables rather than
+     the snapshot taken when that fluid was last shown */
+  function applyModelInputs(o, keepLab) {
     if (o.fluid === 'gas' || o.fluid === 'oil') fluid = o.fluid;
     writeInputs({
       cgr: o.cgr, apiC: o.apiC,
@@ -976,9 +1571,7 @@
       $('cPcrit').value = o.corr.pcrit; $('cInert').value = o.corr.inertCorr;
       $('cZ').value = o.corr.z; $('cMug').value = o.corr.mug;
     }
-    if (o.calib) {
-      writeInputs({ calPb: o.calib.pbMeas, calBob: o.calib.bobMeas, calMuod: o.calib.muodMeas });
-    }
+    if (!keepLab) restoreLab(o);
     applyFluidVisibility();
   }
 
@@ -1060,8 +1653,9 @@
     if (playTimer) togglePlay();
     fluid = next;
     cursorP = null;
+    renderLabTable();
     if (back && back.inputs) {
-      applyModelInputs(back.inputs);
+      applyModelInputs(back.inputs, true);
       buildPresetOptions(back.preset);
     } else {
       buildPresetOptions(DEFAULT_PRESET[next]);
@@ -1083,6 +1677,7 @@
     });
     $('unitField').setAttribute('aria-pressed', String(units === 'field'));
     $('unitMetric').setAttribute('aria-pressed', String(units === 'metric'));
+    renderLabTable();
     recompute();
   }
 
@@ -1139,6 +1734,7 @@
       setCursor(uu('p').inv(parseFloat(ev.target.value)), 'slider');
     });
     $('btnPlay').addEventListener('click', togglePlay);
+    initLab();
     $('tableSel').addEventListener('change', renderTable);
     $('fmtSel').addEventListener('change', renderExport);
     $('fmtUnits').addEventListener('change', renderExport);
@@ -1168,6 +1764,7 @@
         localStorage.removeItem('pvt.inputs');
         localStorage.removeItem('pvt.inputs.oil');
         localStorage.removeItem('pvt.inputs.gas');
+        localStorage.removeItem('pvt.lab');
       } catch (e) { /* ignore */ }
       location.reload();
     });

@@ -128,7 +128,8 @@ button.ghost { background: transparent; }
   gap: 18px; padding: 18px 20px 48px; align-items: start;
   max-width: 1500px; margin: 0 auto;
 }
-@media (max-width: 960px) { .layout { grid-template-columns: 1fr; padding: 14px 16px 40px; } }
+@media (max-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 40px; } }
+.layout > main { min-width: 0; }
 
 .panel {
   background: var(--surface-1);
@@ -364,3 +365,51 @@ footer.foot { color: var(--text-muted); font-size: 12px; padding: 0 20px 28px; m
 /* oil / gas reservoir switch: full width of the sidebar */
 .fluid-seg { display: flex; width: 100%; }
 .fluid-seg button { flex: 1 1 50%; padding: 8px 10px; }
+
+/* ---------- laboratory data and tuning ---------- */
+.lab-step { margin-bottom: 26px; }
+.lab-step h2 { font-size: 15px; margin-bottom: 4px; }
+.lab-scalars { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 0 18px; max-width: 640px; }
+.lab-wrap { max-height: 52vh; overflow: auto; margin-bottom: 10px; }
+.lab-table td { padding: 2px 4px; }
+.lab-table td:first-child { text-align: right; }
+.lab-table input {
+  width: 100%; min-width: 84px; text-align: right; border-color: transparent; background: transparent;
+  border-radius: 4px; padding: 5px 6px; font-variant-numeric: tabular-nums;
+}
+.lab-table input:hover { border-color: var(--border); }
+.lab-table input:focus-visible { background: var(--surface-1); outline-offset: 0; }
+.lab-table .lab-branch { color: var(--text-muted); font-size: 12px; text-align: left; padding: 0 8px; }
+.lab-table .lab-del { padding: 3px 8px; color: var(--text-muted); }
+.lab-actions { margin-top: 0; }
+tr.group-row td { background: var(--surface-2); color: var(--text-secondary); font-weight: 600; font-size: 12px; }
+tr.is-best td { font-weight: 600; }
+tr.is-best td:last-child, tr.at-bound td:last-child { color: var(--text-secondary); }
+tr.at-bound { box-shadow: inset 2px 0 0 var(--warning); }
+.switch { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
+.switch input { width: auto; accent-color: var(--accent); }
+.lab-dot { fill: var(--surface-1); stroke: var(--text-primary) !important; stroke-width: 2; }
+.series-line.dashed { stroke-dasharray: 5 4; stroke-width: 1.5; }
+.legend-key.scatter { width: 9px; height: 9px; border-radius: 50%; background: transparent !important; border: 2px solid var(--text-primary); }
+.legend-key.dashed { background: none !important; border-top: 2px dashed var(--slot-7); height: 0; }
+button:disabled { opacity: 0.5; cursor: default; }
+.table-wrap:has(> table:empty) { display: none; }
+
+/* ranking: one block per correlation family, table beside its chart */
+.rank-family { margin-top: 18px; }
+.rank-family h3 { font-size: 14px; margin-bottom: 4px; }
+.rank-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 6px; }
+@media (max-width: 1250px) { .rank-body { grid-template-columns: minmax(0, 1fr); } }
+.rank-body th, .rank-body td { padding: 7px 8px; }
+.rank-body td:first-child, .rank-body th:first-child { width: 36px; text-align: center; }
+.rank-body td:nth-child(2), .rank-body th:nth-child(2) { text-align: left; }
+.rank-body input[type="radio"] { width: auto; accent-color: var(--accent); margin: 0; cursor: pointer; }
+.rank-body label { cursor: pointer; }
+tr.is-selected td { font-weight: 600; }
+tr.is-selected { box-shadow: inset 2px 0 0 var(--accent); }
+.best-badge {
+  margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 45%, transparent);
+}
+.series-line.bold { stroke-width: 3; }
+.series-line.muted { stroke-width: 1.5; opacity: 0.5; }

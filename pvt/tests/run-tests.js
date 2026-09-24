@@ -5,13 +5,15 @@
  * Reference values were produced from an independent implementation of the
  * published equations; the remaining tests assert the physical invariants a
  * reservoir simulator relies on (monotonicity, continuity at the bubble point,
- * deck structure and unit conversions).
+ * deck structure and unit conversions) and the regression against laboratory
+ * data (recovery of known multipliers, correlation ranking, deck headers).
  */
 'use strict';
 var C = require('../js/correlations.js');
 var M = require('../js/pvt-model.js');
 var E = require('../js/export.js');
 var FS = require('../js/fluid-state.js');
+var TU = require('../js/tuning.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -584,6 +586,100 @@ ok('every gas case builds finite, positive tables', (function () {
   if (bad.length) console.log('     ' + bad.slice(0, 5).join('\n     '));
   return bad.length === 0;
 })());
+
+
+section('21. Laboratory data: tuning and correlation ranking');
+(function () {
+  var base = { api: 35, gammaG: 0.75, rsb: 600, tempF: 180, tSepF: 80, pSepPsia: 114.7, pMax: 6000 };
+  var clone = function (o, extra) { var r = JSON.parse(JSON.stringify(o)); for (var k in extra) r[k] = extra[k]; return r; };
+
+  /* no tuning = the published correlations, bit for bit */
+  var m0 = M.build(base), m1 = M.build(clone(base, { tuning: { pbMult: 1, boMult: 1 } }));
+  ok('unit multipliers leave the model unchanged',
+     m0.pb === m1.pb && m0.oil.every(function (r, i) { return r.bo === m1.oil[i].bo && r.muo === m1.oil[i].muo; }));
+  ok('an untuned model reports no tuning', m0.tuning === null);
+
+  /* model.at() is the table's own evaluator */
+  ok('model.at(p) reproduces every oil and gas table row', m0.oil.every(function (r, i) {
+    var a = m0.at(r.p), g = m0.gas[i];
+    return Math.abs(a.bo - r.bo) < 1e-12 && Math.abs(a.rs - r.rs) < 1e-9 &&
+           Math.abs(a.muo - r.muo) < 1e-12 && Math.abs(a.z - g.z) < 1e-12 && Math.abs(a.mug - g.mug) < 1e-15;
+  }));
+  ok('model.at is not serialised into the JSON export', !/"at"/.test(E.generate(m0, 'json', 'field')));
+
+  /* each multiplier does what it says */
+  var t = M.build(clone(base, { tuning: { pbMult: 1.1, boMult: 0.9, muodMult: 1.3, tpcMult: 1.02, mugMult: 1.1 } }));
+  near('pbMult stretches Pb', t.pb, m0.pbCalc * 1.1, 1e-9);
+  near('boMult scales Bob - 1', t.bob - 1, 0.9 * (C.BO.standing(600, { api: 35, gammaG: 0.75, tempF: 180, tSepF: 80, pSepPsia: 114.7 }) - 1), 1e-9);
+  near('muodMult scales the dead-oil viscosity', t.muod, m0.muod * 1.3, 1e-12);
+  near('tpcMult scales Tpc', t.pcrit.tpc, m0.pcrit.tpc * 1.02, 1e-12);
+  ok('tuned PVTO still passes the simulator consistency checks',
+     !t.warnings.some(function (w) { return /monoton|cross/.test(w); }), t.warnings.join(' | '));
+
+  /* synthetic laboratory data from known multipliers is recovered */
+  var truth = { pbMult: 1.12, boMult: 0.93, coMult: 1.4, muodMult: 1.3, muouMult: 0.7,
+                tpcMult: 1.03, ppcMult: 0.97, mugMult: 1.08 };
+  var ref = M.build(clone(base, { tuning: truth, pointsOnly: true }));
+  var rows = [5000, 4000, 3000, ref.pb, 2400, 2000, 1500, 1000, 600, 300, 100].map(function (p) {
+    var r = ref.at(p); return { p: p, rs: r.rs, bo: r.bo, muo: r.muo, z: r.z, mug: r.mug };
+  });
+  var reg = TU.regress(base, { rows: rows });
+  Object.keys(truth).forEach(function (k) { near('regression recovers ' + k, reg.tuning[k], truth[k], 2e-3); });
+  ok('every property fits to better than 0.1 % AARE after tuning', Object.keys(reg.after).every(function (k) {
+    return !reg.after[k].n || reg.after[k].aare < 0.1;
+  }));
+
+  var reg2 = TU.regress(base, { pb: 2750, muod: 3.1, rows: rows });
+  near('a measured Pb is honoured exactly', M.build(clone(base, { tuning: reg2.tuning })).pb, 2750, 1e-9);
+  near('a measured dead-oil viscosity is honoured exactly', M.build(clone(base, { tuning: reg2.tuning })).muod, 3.1, 1e-9);
+  ok('Pb specified as an input is not moved by the regression',
+     TU.regress(clone(base, { spec: 'pb', pbMeas: 2500 }), { pb: 2800, rows: rows }).tuning.pbMult === 1);
+
+  /* tuning never worsens the fit: a wrong correlation gets multiplier 1 or better */
+  var worst = TU.regress(clone(base, { corr: { pb: 'petroskyFarshad' } }), { rows: rows });
+  ok('tuned AARE never exceeds untuned AARE', Object.keys(worst.after).every(function (k) {
+    var a = worst.after[k], b = worst.before[k];
+    return !a.n || !b.n || a.n !== b.n || a.aare <= b.aare + 1e-9;
+  }));
+
+  /* ranking: the generating correlation wins its family */
+  var sc = TU.screen(base, { rows: rows });
+  var fam = function (c) { return sc.filter(function (f) { return f.corr === c; })[0]; };
+  ok('ranking picks the correlation the data came from for Rs', fam('pb').best === 'standing', fam('pb') && fam('pb').best);
+  ok('ranking picks the correlation the data came from for Bo', fam('bo').best === 'standing', fam('bo') && fam('bo').best);
+  ok('ranking covers all nine oil-mode families', sc.length === 9, sc.length);
+  ok('every ranked candidate carries its own tuning, so its tuned curve can be drawn',
+     sc.every(function (f) { return f.rows.every(function (r) { return r.error || (r.tuning && r.tuning.pbMult > 0); }); }));
+
+  /* gas reservoir */
+  var gi = { fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12, apiC: 58, tempF: 230, pMax: 6000 };
+  var gref = M.build(clone(gi, { tuning: { tpcMult: 0.97, ppcMult: 1.04, mugMult: 0.9 }, pointsOnly: true }));
+  var grows = [500, 1500, 3000, 4500, 6000].map(function (p) { var q = gref.at(p); return { p: p, z: q.z, mug: q.mug }; });
+  var greg = TU.regress(gi, { rows: grows });
+  near('gas: Tpc multiplier recovered', greg.tuning.tpcMult, 0.97, 2e-3);
+  near('gas: Ppc multiplier recovered', greg.tuning.ppcMult, 1.04, 2e-3);
+  near('gas: viscosity multiplier recovered', greg.tuning.mugMult, 0.9, 2e-3);
+  var gm = M.build(clone(gi, { tuning: greg.tuning }));
+  ok('gas: tuned z carries into Bg and Eg = 1/Bg', gm.gas.every(function (r) {
+    return Math.abs(r.eg * r.bg - 1) < 1e-12 && Math.abs(r.bg - r.bgw * gm.fws) < 1e-15;
+  }));
+  ok('gas: oil-only laboratory columns are ignored', TU.normalize({ pb: 3000, rows: [{ p: 1000, bo: 1.2 }] }, 'gas').rows.length === 0);
+
+  /* decks record the tuning */
+  var tm = M.build(clone(base, { tuning: { pbMult: 1.1, fit: [{ label: 'Solution GOR', n: 9, before: 8.7, after: 0.4 }] } }));
+  var deck = E.generate(tm, 'eclipse', 'field'), cdeck = E.generate(gm, 'cmg', 'field');
+  ok('ECLIPSE header lists the multipliers and the fit',
+     /TUNED TO LABORATORY DATA/.test(deck) && /Pb \/ Rs\(p\) stretch\s+: x 1\.1000/.test(deck) && /8\.70 -> 0\.40/.test(deck));
+  ok('CMG gas header lists the multipliers', /\*\* TUNED TO LABORATORY DATA/.test(cdeck) && /Pseudo-critical T/.test(cdeck));
+  ok('an untuned deck has no tuning block', !/TUNED TO LABORATORY/.test(E.generate(m0, 'eclipse', 'field')));
+
+  /* spreadsheet paste */
+  var pr = TU.parseTable('Pressure\tRs\tBo\npsia\tscf/STB\trb/STB\n3000\t600\t1.31\n2000\t\t1.25\n', ['p', 'rs', 'bo']);
+  ok('pasted table: header and unit rows skipped, blanks kept as null',
+     pr.length === 2 && pr[0].p === 3000 && pr[1].rs === null && pr[1].bo === 1.25, JSON.stringify(pr));
+  ok('1-D minimiser finds a bracketed minimum',
+     Math.abs(TU.minimize1D(function (m) { return Math.abs(Math.log(m / 1.37)); }, 0.5, 2).value - 1.37) < 1e-3);
+})();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

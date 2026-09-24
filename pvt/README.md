@@ -46,8 +46,8 @@ reservoir temperature, and either the solution GOR at the bubble point
 gravity correction), CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub> mole fractions,
 brine salinity (ppm NaCl, as a water analysis reports it), rock compressibility
 and reference pressure, the pressure range
-and node count of the table, and measured P<sub>b</sub>, B<sub>ob</sub> and dead-oil
-viscosity for calibration.
+and node count of the table. Laboratory data for tuning is entered on its own
+tab (see *Tuning to laboratory data*).
 
 **Gas reservoir:** separator gas gravity, reservoir temperature, separator
 conditions, CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub>, and the gas type. A wet
@@ -220,15 +220,52 @@ It places the fluid; it does not measure it.
 6. **PVTO records**: each saturated node gets its own saturation pressure and
    its own undersaturated branch, which is what ECLIPSE expects for live oil.
 
-### Calibration to laboratory data
+### Tuning to laboratory data
 
-* **Measured P<sub>b</sub>** — the saturated R<sub>s</sub> curve is stretched in
-  pressure by P<sub>b,meas</sub>/P<sub>b,calc</sub>, so it still reaches
-  R<sub>sb</sub> exactly at the measured bubble point.
-* **Measured B<sub>ob</sub>** — the correlation's B<sub>o</sub> − 1 is scaled so
-  the bubble-point value matches, preserving the shape of the curve.
-* **Measured dead-oil viscosity** — replaces the correlated &mu;<sub>od</sub>,
-  which then propagates through the saturated and undersaturated branches.
+The **Lab data & tuning** tab takes a measured bubble point, a dead-oil
+viscosity at reservoir temperature, and a table of pressure against
+R<sub>s</sub>, B<sub>o</sub>, oil viscosity, gas z and gas viscosity (gas
+reservoirs: z and viscosity of the reservoir gas). Any cell may be blank; a
+block copied from a spreadsheet pastes into the table from any cell. Enter
+separator-adjusted R<sub>s</sub> and B<sub>o</sub>, the basis simulators use.
+
+1. **Rank** &mdash; each correlation family is evaluated with every member
+   swapped in, tuned, and scored by average absolute relative error (AARE)
+   before and after tuning. Beside each family's table a chart plots every
+   candidate against the laboratory points, as published or after its own
+   tuning (toggle above the results), with the selected correlation drawn
+   bold. The radio button in each row chooses the correlation carried into
+   tuning &mdash; any candidate, not only the best fit &mdash; and updates the
+   sidebar; *Use the best-fitting correlations* picks every winner at once.
+2. **Tune** &mdash; one multiplier per property, regressed in dependency order,
+   each against its own points (`js/tuning.js`):
+
+   | Multiplier | Acts on | Fitted to |
+   |---|---|---|
+   | `pbMult` | R<sub>s</sub>(p) stretched in pressure, P<sub>b</sub> = P<sub>b,corr</sub> &times; m | measured P<sub>b</sub> exactly, else the R<sub>s</sub> points |
+   | `boMult` | B<sub>o</sub> = 1 + m(B<sub>o,corr</sub> &minus; 1) | saturated B<sub>o</sub> |
+   | `coMult` | c<sub>o</sub> &times; m | undersaturated B<sub>o</sub> |
+   | `muodMult` | &mu;<sub>od</sub> &times; m | measured &mu;<sub>od</sub> exactly, else saturated &mu;<sub>o</sub> |
+   | `muobMult` | &mu;<sub>ob</sub> &times; m | saturated &mu;<sub>o</sub> (only when &mu;<sub>od</sub> is measured) |
+   | `muouMult` | the rise &mu;<sub>o</sub> &minus; &mu;<sub>ob</sub> above P<sub>b</sub> &times; m | undersaturated &mu;<sub>o</sub> |
+   | `tpcMult`, `ppcMult` | T<sub>pc</sub>, P<sub>pc</sub> &times; m (so z, B<sub>g</sub>, &rho;<sub>g</sub>, c<sub>g</sub>) | gas z |
+   | `mugMult` | &mu;<sub>g</sub> &times; m | gas viscosity |
+
+   Each fit minimises the AARE of its property (log-spaced scan plus
+   golden-section refinement). The published correlation, m = 1, is always a
+   candidate, so tuning never worsens the fit; a multiplier that stops at its
+   search limit is flagged, since it means the correlation does not suit the
+   fluid.
+3. **Apply** &mdash; with tuning switched on, every table, chart and export uses
+   the tuned correlations, and the deck header lists the multipliers and the
+   AARE before and after. Match charts plot the laboratory points against the
+   tuned and untuned curves.
+
+With P<sub>b</sub> specified as an input the R<sub>s</sub> curve is already
+anchored, so `pbMult` is not regressed. Cases saved with the earlier
+three-value calibration (P<sub>b</sub>, B<sub>ob</sub>, &mu;<sub>od</sub>) load
+into the laboratory table and reproduce the same tables. `Model.build()` still
+accepts `calib` for scripts.
 
 ## Quality control
 
@@ -276,7 +313,8 @@ pvt/
   index.html            page structure
   css/app.css           tokens, layout, chart chrome (light + dark)
   js/correlations.js    the correlation library (pure functions)
-  js/pvt-model.js       model assembly: grids, branches, calibration, QC
+  js/pvt-model.js       model assembly: grids, branches, tuning multipliers, QC
+  js/tuning.js          regression against laboratory data, correlation ranking
   js/export.js          ECLIPSE / CMG / CSV / JSON writers
   js/charts.js          SVG charts with crosshair, tooltip and keyboard access
   js/fluid-state.js     cursor-pressure fluid state and the schematic P-T envelope
@@ -285,7 +323,7 @@ pvt/
   tests/run-tests.js    regression tests
 ```
 
-`correlations.js`, `pvt-model.js` and `export.js` are UMD modules: the same
+`correlations.js`, `pvt-model.js`, `tuning.js` and `export.js` are UMD modules: the same
 files that the page loads can be `require()`d from Node, so the library is
 usable in a scripted workflow.
 
@@ -294,6 +332,16 @@ const Model = require('./pvt/js/pvt-model.js');
 const Exp   = require('./pvt/js/export.js');
 const m = Model.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMax: 6000 });
 console.log(Exp.eclipse(m, 'field'));
+
+// tune to laboratory data, then build the final tables from the tuned model
+const Tune = require('./pvt/js/tuning.js');
+const input = { api: 35, gammaG: 0.75, rsb: 600, tempF: 180, pMax: 6000 };
+const lab = { pb: 2710, muod: 3.2, rows: [
+  { p: 4000, bo: 1.291, muo: 0.83 }, { p: 2710, rs: 600, bo: 1.305 },
+  { p: 1500, rs: 318, bo: 1.187, z: 0.861 }, { p: 500, rs: 118, bo: 1.098, z: 0.938 } ] };
+const fit = Tune.regress(input, lab);            // fit.params, fit.before, fit.after
+const tuned = Model.build({ ...input, tuning: fit.tuning });
+console.log(Exp.cmg(tuned, 'field'));
 ```
 
 ## Tests
@@ -302,7 +350,7 @@ console.log(Exp.eclipse(m, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-187 checks covering reference values for each correlation, the physical
+222 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
@@ -313,7 +361,11 @@ every preset fluid. The gas-reservoir checks cover the McCain recombination,
 the separator-basis B<sub>g</sub> and E<sub>g</sub> = 1/B<sub>g</sub>, the
 single-phase barrel, the fluid-type classification and separator placement of
 each envelope, the ECLIPSE `PVDG` and CMG `*PVTG` / `*PVTG *RV` deck structure
-and units, and a sweep of 192 gas cases.
+and units, and a sweep of 192 gas cases. The tuning checks regress synthetic
+laboratory data generated from known multipliers and require every multiplier
+back to 0.2 %, plus exact honouring of a measured P<sub>b</sub> and
+&mu;<sub>od</sub>, no-worse-than-untuned fits, correlation ranking, and the
+tuning block in the ECLIPSE and CMG headers.
 
 ## Limitations
 

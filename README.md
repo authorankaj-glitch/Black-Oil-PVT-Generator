@@ -36,6 +36,13 @@ raise a QC warning before anything is exported. The **Correlation spread** view
 evaluates every correlation on the current fluid, which is the honest
 uncertainty band to quote when no laboratory study is available.
 
+When a laboratory study *is* available, the **Lab data & tuning** tab takes it
+as a table (pressure, R<sub>s</sub>, B<sub>o</sub>, oil viscosity, gas z and
+viscosity &mdash; paste straight from a spreadsheet), ranks every correlation
+by its fit before and after tuning, regresses one multiplier per property, and
+builds the final tables and simulator decks from the tuned correlations. The
+multipliers and the fit are written into every deck header.
+
 Two cursor-linked pictures follow the same pressure as every chart on the page,
 and both change with the fluid: for oil, a barrel showing gas coming out of
 solution and a bubble-point-anchored envelope; for gas, a barrel of expanding
@@ -83,12 +90,14 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-187 checks: reference values for every correlation, the physical invariants a
+222 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis
 B<sub>g</sub>/E<sub>g</sub>, envelope classification, ECLIPSE and CMG gas deck
-structure, a 192-case gas sweep).
+structure, a 192-case gas sweep), and the regression against laboratory data
+(recovery of known multipliers from synthetic data, correlation ranking,
+deck headers).
 
 ## Deployment
 
