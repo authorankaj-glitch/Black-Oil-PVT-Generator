@@ -82,6 +82,7 @@
       '  Gas viscosity              : ' + n(c.mug),
       '  Water properties           : McCain (1991) / Osif (1988)'
     ];
+    L = L.concat(tuningBlock(model));
     if (model.warnings.length) {
       L.push('', 'QC WARNINGS');
       model.warnings.forEach(function (w) { L.push('  ! ' + w); });
@@ -90,6 +91,35 @@
       'PVT data (CCE / DL / separator tests) before final reserves or',
       'full-field simulation work.');
     return L.map(function (l) { return (comment + ' ' + l).replace(/\s+$/, ''); }).join('\n');
+  }
+
+  /* Tuning block: the regressed multipliers and, when the page supplies it,
+     the fit to the laboratory data before and after tuning. */
+  function tuningBlock(model) {
+    var t = model.tuning, i = model.input;
+    if (!t) return [];
+    var names = {
+      pbMult: 'Pb / Rs(p) stretch', boMult: 'Bo expansion', coMult: 'Oil compressibility',
+      muodMult: 'Dead-oil viscosity', muobMult: 'Saturated oil viscosity',
+      muouMult: 'Undersat. oil viscosity', tpcMult: 'Pseudo-critical T',
+      ppcMult: 'Pseudo-critical p', mugMult: 'Gas viscosity'
+    };
+    var L = ['', 'TUNED TO LABORATORY DATA (multipliers on the correlations above)'];
+    Object.keys(names).forEach(function (k) {
+      if (t[k] !== undefined && t[k] !== 1) {
+        L.push('  ' + (names[k] + '                              ').slice(0, 27) + ': x ' + f(t[k], 4));
+      }
+    });
+    var fit = i.tuning && i.tuning.fit;
+    if (fit && fit.length) {
+      L.push('  Fit to the data, AARE %    : untuned -> tuned (points)');
+      var w = fit.reduce(function (a, r) { return Math.max(a, r.label.length); }, 25);
+      fit.forEach(function (r) {
+        L.push('    ' + (r.label + new Array(w + 1).join(' ')).slice(0, w) + ': ' +
+          f(r.before, 2) + ' -> ' + f(r.after, 2) + '  (' + r.n + ')');
+      });
+    }
+    return L;
   }
 
   /* Header block for a gas-reservoir model. */
@@ -135,6 +165,7 @@
       '  A dry gas drops no liquid; a wet gas yields its condensate at the',
       '  separator, not in the reservoir. Retrograde gas condensates are out of',
       '  scope - they need a CCE/CVD study or a compositional model.');
+    L = L.concat(tuningBlock(model));
     if (model.warnings.length) {
       L.push('', 'QC WARNINGS');
       model.warnings.forEach(function (w) { L.push('  ! ' + w); });

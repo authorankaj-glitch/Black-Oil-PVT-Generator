@@ -56,7 +56,11 @@
   /*
    * opts = {
    *   title, subtitle, xLabel, yLabel,
-   *   series: [{ name, slot (1-8), points: [{x, y}] }],
+   *   series: [{ name, slot (1-8), points: [{x, y}], scatter }],
+   *                                  scatter: true draws markers only (laboratory
+   *                                  points); the crosshair tooltip follows the
+   *                                  line series; dashed: true for a reference
+   *                                  curve (the untuned correlation)
    *   marker: { x, label },          vertical annotation (e.g. Pb)
    *   fmtX, fmtY                     value formatters for the tooltip
    * }
@@ -91,7 +95,7 @@
       o.series.forEach(function (s) {
         var li = document.createElement('li');
         var key = document.createElement('span');
-        key.className = 'legend-key slot-' + s.slot;
+        key.className = 'legend-key slot-' + s.slot + (s.scatter ? ' scatter' : s.dashed ? ' dashed' : '');
         li.appendChild(key);
         var txt = document.createElement('span');
         txt.textContent = s.name;
@@ -190,25 +194,34 @@
       svg.appendChild(mt);
     }
 
-    /* series */
+    /* series: laboratory points as open markers, everything else as lines */
+    var lines = o.series.filter(function (s) { return !s.scatter && s.points.length; });
     o.series.forEach(function (s) {
+      if (s.scatter) {
+        s.points.forEach(function (p) {
+          svg.appendChild(el('circle', { class: 'lab-dot slot-' + s.slot,
+            cx: sx(p.x), cy: sy(p.y), r: 4.5 }));
+        });
+        return;
+      }
+      if (!s.points.length) return;
       var d = s.points.map(function (p, i) {
         return (i ? 'L' : 'M') + sx(p.x).toFixed(2) + ' ' + sy(p.y).toFixed(2);
       }).join(' ');
-      svg.appendChild(el('path', { class: 'series-line slot-' + s.slot, d: d }));
+      svg.appendChild(el('path', { class: 'series-line slot-' + s.slot + (s.dashed ? ' dashed' : ''), d: d }));
       var last = s.points[s.points.length - 1];
       svg.appendChild(el('circle', { class: 'series-dot slot-' + s.slot,
         cx: sx(last.x), cy: sy(last.y), r: 4 }));
     });
 
     /* selective end labels: only when they will not collide */
-    var ends = o.series.map(function (s) {
+    var ends = lines.map(function (s) {
       var last = s.points[s.points.length - 1];
       return { name: s.name, y: sy(last.y), x: sx(last.x) };
     }).sort(function (a, b) { return a.y - b.y; });
     var collide = false;
     for (var i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) collide = true;
-    if (!collide && o.series.length <= 4 && o.endLabels !== false) {
+    if (!collide && lines.length <= 4 && o.endLabels !== false) {
       ends.forEach(function (e) {
         var t = el('text', { class: 'end-label', x: e.x - 8, y: e.y - 10, 'text-anchor': 'end' });
         t.textContent = e.name;
@@ -219,7 +232,7 @@
     /* hover layer */
     this.cross = el('line', { class: 'crosshair', y1: M.top, y2: M.top + hPlot, x1: -99, x2: -99 });
     svg.appendChild(this.cross);
-    this.hoverDots = o.series.map(function (s) {
+    this.hoverDots = lines.map(function (s) {
       var c = el('circle', { class: 'hover-dot slot-' + s.slot, r: 4.5, cx: -99, cy: -99 });
       svg.appendChild(c);
       return c;
@@ -230,7 +243,8 @@
 
     var idx = -1;
     function show(i, clientX) {
-      var base = o.series[0].points;
+      if (!lines.length) return;
+      var base = lines[0].points;
       idx = Math.max(0, Math.min(base.length - 1, i));
       var px = base[idx].x;
       self.cross.setAttribute('x1', sx(px));
@@ -240,7 +254,7 @@
       head.className = 'tip-head';
       head.textContent = (o.fmtX ? o.fmtX(px) : fmtNum(px)) + ' ' + (o.xUnit || '');
       self.tip.appendChild(head);
-      o.series.forEach(function (s, k) {
+      lines.forEach(function (s, k) {
         var p = s.points[Math.min(idx, s.points.length - 1)];
         self.hoverDots[k].setAttribute('cx', sx(p.x));
         self.hoverDots[k].setAttribute('cy', sy(p.y));
@@ -275,7 +289,7 @@
     function nearest(clientX) {
       var rect = svg.getBoundingClientRect();
       var xv = x0 + (clientX - rect.left - M.left) / Math.max(w - M.left - M.right, 1) * (x1 - x0);
-      var base = o.series[0].points, best = 0, bd = Infinity;
+      var base = lines.length ? lines[0].points : [], best = 0, bd = Infinity;
       base.forEach(function (p, i) {
         var d = Math.abs(p.x - xv);
         if (d < bd) { bd = d; best = i; }

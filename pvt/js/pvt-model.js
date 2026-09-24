@@ -9,8 +9,23 @@
  *     gas:   [{p, z, bg, bgRbMscf, eg, mug, rhoG, cg}],
  *     water: [{p, bw, muw, cw, rhoW}],
  *     pvto:  [{rs, pb, rows:[{p, bo, muo}]}],
- *     warnings: []
+ *     tuning, warnings: []
  *   }
+ *
+ * Tuning (optional, input.tuning): multipliers regressed against laboratory
+ * data by tuning.js. Every one defaults to 1, i.e. the published correlation.
+ *   pbMult    stretch of the Rs(p) curve in pressure; Pb = Pb(corr) * pbMult
+ *   boMult    scales the dissolved-gas expansion, Bo = 1 + boMult (Bo(corr) - 1)
+ *   coMult    scales the undersaturated oil compressibility
+ *   muodMult  scales the dead-oil viscosity
+ *   muobMult  scales the saturated (live) oil viscosity
+ *   muouMult  scales the rise of oil viscosity above the saturation pressure
+ *   tpcMult, ppcMult  scale the gas pseudo-critical T and p (z, Bg, rho_g, cg)
+ *   mugMult   scales the gas viscosity
+ *
+ * The model also carries a non-enumerable model.at(p) that evaluates every
+ * property at an arbitrary pressure through exactly the code that fills the
+ * tables - the regression compares laboratory points against it.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -35,8 +50,49 @@
       muod: 'beggsRobinson', muob: 'beggsRobinson', muou: 'vasquezBeggs',
       pcrit: 'sutton', inertCorr: 'wichertAziz', z: 'dak', mug: 'leeGonzalezEakin'
     },
-    calib: { pbMeas: null, bobMeas: null, muodMeas: null }
+    calib: { pbMeas: null, bobMeas: null, muodMeas: null },
+    tuning: null
   };
+
+  var TUNING_KEYS = ['pbMult', 'boMult', 'coMult', 'muodMult', 'muobMult', 'muouMult',
+                     'tpcMult', 'ppcMult', 'mugMult'];
+
+  /* Tuning multipliers with every missing or invalid entry set to 1. */
+  function tuningOf(inp) {
+    var t = inp.tuning || {}, out = { active: false };
+    TUNING_KEYS.forEach(function (k) {
+      var v = t[k];
+      out[k] = typeof v === 'number' && isFinite(v) && v > 0 ? v : 1;
+      if (out[k] !== 1) out.active = true;
+    });
+    return out;
+  }
+
+  /* Pseudo-criticals of the gas, with the tuning multipliers applied. */
+  function tunedPseudoCriticals(g, inp, method, T) {
+    var pc = C.pseudoCriticals(g, {
+      method: method,
+      correction: inp.corr.inertCorr === 'carr' ? 'carr' : 'wichertAziz',
+      yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2
+    });
+    return { tpc: pc.tpc * T.tpcMult, ppc: pc.ppc * T.ppcMult, eps: pc.eps,
+             tpcCorr: pc.tpc, ppcCorr: pc.ppc };
+  }
+
+  /* z, Bg, density, viscosity and cg of a gas at one pressure. */
+  function gasPoint(p, inp, g, pcrit, T) {
+    var c = inp.corr, opt = { _pc: pcrit, yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2 };
+    var z = C.gasZ(c.z, p, inp.tempF, g, opt);
+    var rhoG = C.gasDensity(z, p, inp.tempF, g);
+    var mug = c.mug === 'carrKobayashiBurrows'
+      ? C.MU_G.carrKobayashiBurrows(p / pcrit.ppc, (inp.tempF + C.TZERO) / pcrit.tpc,
+          inp.tempF, g, opt)
+      : C.MU_G.leeGonzalezEakin(rhoG, inp.tempF, g);
+    return {
+      z: z, bg: C.gasBg(z, p, inp.tempF), rhoG: rhoG, mug: mug * T.mugMult,
+      cg: C.gasCompressibility(c.z, p, inp.tempF, g, opt)
+    };
+  }
 
   function merge(base, over) {
     var out = {}, k;
@@ -176,12 +232,19 @@
     } else {
       pbCalc = C.PB[c.pb](s.rsb, s);
     }
-    var pb = pbCalc;
+    var pb = pbCalc, T = tuningOf(inp);
     /* Calibration to a measured bubble point: the saturated Rs curve is
-       stretched in pressure so that Rs(pb_meas) = Rsb exactly. */
-    if (inp.calib && inp.calib.pbMeas > 0 && inp.spec !== 'pb') {
-      pbFactor = inp.calib.pbMeas / pbCalc;
-      pb = inp.calib.pbMeas;
+       stretched in pressure so that Rs(pb_meas) = Rsb exactly. A regressed
+       pbMult does the same thing and takes precedence. With Pb specified as
+       an input the curve is already anchored, so neither applies. */
+    if (inp.spec !== 'pb') {
+      if (T.pbMult !== 1) {
+        pbFactor = T.pbMult;
+        pb = pbCalc * pbFactor;
+      } else if (inp.calib && inp.calib.pbMeas > 0) {
+        pbFactor = inp.calib.pbMeas / pbCalc;
+        pb = inp.calib.pbMeas;
+      }
     }
     s.pb = pb;
     s.rsb = inp.rsb;
@@ -204,17 +267,21 @@
     };
     var bobRaw = C.BO[c.bo](s.rsb, s);
     var boFactor = 1;
-    if (inp.calib && inp.calib.bobMeas > 0 && bobRaw > 1.0001) {
+    if (T.boMult !== 1) {
+      boFactor = T.boMult;
+    } else if (inp.calib && inp.calib.bobMeas > 0 && bobRaw > 1.0001) {
       boFactor = (inp.calib.bobMeas - 1) / (bobRaw - 1);
     }
     var boSat = function (rs) { return 1 + boFactor * (C.BO[c.bo](rs, s) - 1); };
 
     /* --- dead / saturated oil viscosity -------------------------------- */
-    var muOd = inp.calib && inp.calib.muodMeas > 0 ? inp.calib.muodMeas : C.MU_OD[c.muod](s);
-    var muSat = function (rs) { return C.MU_OB[c.muob](muOd, rs); };
+    var muOd = inp.calib && inp.calib.muodMeas > 0 && T.muodMult === 1
+      ? inp.calib.muodMeas : C.MU_OD[c.muod](s) * T.muodMult;
+    var muSat = function (rs) { return T.muobMult * C.MU_OB[c.muob](muOd, rs); };
 
     /* --- compressibility and the undersaturated branch ------------------ */
-    var coAt = function (p) { return C.CO[c.co](p, s); };
+    var coOf = function (p, sLocal) { return T.coMult * C.CO[c.co](p, sLocal); };
+    var coAt = function (p) { return coOf(p, s); };
     var bob = boSat(s.rsb), muob = muSat(s.rsb);
 
     /* Bo(p>pb) = Bob * exp(-Int(co dp)) integrated with the trapezoid rule. */
@@ -223,24 +290,52 @@
       for (i = 0; i < n; i++) {
         p0 = pbLocal + (pTarget - pbLocal) * i / n;
         p1 = pbLocal + (pTarget - pbLocal) * (i + 1) / n;
-        integral += 0.5 * (C.CO[c.co](Math.max(p0, 1), sLocal) +
-                           C.CO[c.co](Math.max(p1, 1), sLocal)) * (p1 - p0);
+        integral += 0.5 * (coOf(Math.max(p0, 1), sLocal) +
+                           coOf(Math.max(p1, 1), sLocal)) * (p1 - p0);
       }
-      return {
-        bo: bobLocal * Math.exp(-integral),
-        muo: c.muou === 'none' ? muobLocal : C.MU_OU[c.muou](muobLocal, pTarget, pbLocal),
-        co: C.CO[c.co](pTarget, sLocal)
-      };
+      var muo = c.muou === 'none' ? muobLocal
+        : muobLocal + T.muouMult * (C.MU_OU[c.muou](muobLocal, pTarget, pbLocal) - muobLocal);
+      return { bo: bobLocal * Math.exp(-integral), muo: muo, co: coOf(pTarget, sLocal) };
     }
+
+    var pcrit = tunedPseudoCriticals(inp.gammaG, inp,
+      c.pcrit === 'standing' ? (inp.gasType === 'wet' ? 'standingWet' : 'standingDry') : 'sutton', T);
+
+    /* Point evaluator: the same equations as the tables, at any pressure.
+       part = 'oil' or 'gas' skips the other half (the regression's hot path). */
+    function at(p, part) {
+      var r = { p: p };
+      if (part === 'gas') {
+        /* oil columns not needed */
+      } else if (p <= pb + 1e-9) {
+        var rs = rsAt(p);
+        r = { p: p, rs: rs, bo: boSat(rs), muo: muSat(rs), saturated: true };
+      } else {
+        var u = undersaturated(p, pb, bob, muob, s);
+        r = { p: p, rs: s.rsb, bo: u.bo, muo: u.muo, saturated: false };
+      }
+      if (part === 'oil') return r;
+      var gp = gasPoint(p, inp, inp.gammaG, pcrit, T);
+      r.z = gp.z; r.bg = gp.bg; r.mug = gp.mug;
+      return r;
+    }
+
+    var out = {
+      fluid: 'oil', input: inp, psat: pb,
+      pb: pb, pbCalc: pbCalc, pbFactor: pbFactor, boFactor: boFactor,
+      rsb: s.rsb, bob: bob, muob: muob, muod: muOd,
+      cob: coAt(pb),
+      rhoOsc: 62.428 * C.apiToSg(inp.api),
+      rhoGsc: C.RHO_AIR_SC * inp.gammaG,
+      rhoWsc: C.waterDensitySC(inp.salinity),
+      pcrit: pcrit, tuning: T.active ? T : null
+    };
+    Object.defineProperty(out, 'at', { value: at, enumerable: false });
+    /* the regression only needs the point evaluator - skip the tables */
+    if (inp.pointsOnly) return out;
 
     /* --- property tables ------------------------------------------------ */
     var grid = pressureGrid(inp.pMin, pMax, pb, inp.nSat, inp.nUnsat);
-    var pcrit = C.pseudoCriticals(inp.gammaG, {
-      method: c.pcrit === 'standing' ? (inp.gasType === 'wet' ? 'standingWet' : 'standingDry') : 'sutton',
-      correction: c.inertCorr === 'carr' ? 'carr' : 'wichertAziz',
-      yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2
-    });
-    var gasOpt = { _pc: pcrit, yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2 };
 
     var oil = [], gas = [], water = [];
     grid.forEach(function (p) {
@@ -256,18 +351,11 @@
       row.rhoO = C.oilDensity(row.rs, row.bo, inp.gammaG, inp.api);
       oil.push(row);
 
-      /* gas */
-      var z = C.gasZ(c.z, p, inp.tempF, inp.gammaG, gasOpt);
-      var bg = C.gasBg(z, p, inp.tempF);                 /* ft3/scf */
-      var rhoG = C.gasDensity(z, p, inp.tempF, inp.gammaG);
-      var mug = c.mug === 'carrKobayashiBurrows'
-        ? C.MU_G.carrKobayashiBurrows(p / pcrit.ppc, (inp.tempF + C.TZERO) / pcrit.tpc,
-            inp.tempF, inp.gammaG, gasOpt)
-        : C.MU_G.leeGonzalezEakin(rhoG, inp.tempF, inp.gammaG);
+      /* gas (bg in ft3/scf) */
+      var gp = gasPoint(p, inp, inp.gammaG, pcrit, T);
       gas.push({
-        p: p, z: z, bg: bg, bgRbMscf: bg * 1000 / 5.614583, eg: 1 / bg,
-        mug: mug, rhoG: rhoG,
-        cg: C.gasCompressibility(c.z, p, inp.tempF, inp.gammaG, gasOpt)
+        p: p, z: gp.z, bg: gp.bg, bgRbMscf: gp.bg * 1000 / 5.614583, eg: 1 / gp.bg,
+        mug: gp.mug, rhoG: gp.rhoG, cg: gp.cg
       });
 
       /* water */
@@ -297,18 +385,8 @@
       return { rs: rs, pb: pNode, rows: rows };
     });
 
-    var out = {
-      fluid: 'oil', input: inp, psat: pb,
-      pb: pb, pbCalc: pbCalc, pbFactor: pbFactor, boFactor: boFactor,
-      rsb: s.rsb, bob: bob, muob: muob, muod: muOd,
-      cob: coAt(pb),
-      rhoOsc: 62.428 * C.apiToSg(inp.api),
-      rhoGsc: C.RHO_AIR_SC * inp.gammaG,
-      rhoWsc: C.waterDensitySC(inp.salinity),
-      pcrit: pcrit,
-      oil: oil, gas: gas, water: water, pvto: pvto,
-      warnings: rangeWarnings(inp, pb)
-    };
+    out.oil = oil; out.gas = gas; out.water = water; out.pvto = pvto;
+    out.warnings = rangeWarnings(inp, pb);
     out.warnings = out.warnings.concat(tableChecks(out));
     return out;
   }
@@ -349,34 +427,36 @@
 
   function buildGas(userInput) {
     var inp = merge(DEFAULTS, userInput);
-    var c = inp.corr, kind = inp.gasKind === 'wet' ? 'wet' : 'dry';
+    var c = inp.corr, kind = inp.gasKind === 'wet' ? 'wet' : 'dry', T = tuningOf(inp);
     var cgr = kind === 'dry' ? 0 : Math.max(inp.cgr || 0, 0);
     var apiC = inp.apiC;
     var grid = pressureGrid(inp.pMin, inp.pMax, inp.pMax, inp.nSat, 0);
 
     var gammaW = C.wellstreamGravity(inp.gammaG, cgr, apiC);
     var fws = C.wellstreamFactor(cgr, apiC);
-    var pcrit = C.pseudoCriticals(gammaW, {
-      method: c.pcrit === 'standing' ? (kind === 'dry' ? 'standingDry' : 'standingWet') : 'sutton',
-      correction: c.inertCorr === 'carr' ? 'carr' : 'wichertAziz',
-      yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2
-    });
-    var gasOpt = { _pc: pcrit, yCO2: inp.yCO2, yH2S: inp.yH2S, yN2: inp.yN2 };
-    var tpr = (inp.tempF + C.TZERO) / pcrit.tpc;
+    var pcrit = tunedPseudoCriticals(gammaW, inp,
+      c.pcrit === 'standing' ? (kind === 'dry' ? 'standingDry' : 'standingWet') : 'sutton', T);
+
+    /* Point evaluator (z of the reservoir gas, Bg on the separator basis). */
+    function at(p) {
+      var gp = gasPoint(p, inp, gammaW, pcrit, T);
+      return { p: p, z: gp.z, bg: gp.bg * fws, mug: gp.mug };
+    }
+    if (inp.pointsOnly) {
+      var lite = { fluid: 'gas', gasKind: kind, input: inp, gammaW: gammaW, pcrit: pcrit,
+                   tuning: T.active ? T : null };
+      Object.defineProperty(lite, 'at', { value: at, enumerable: false });
+      return lite;
+    }
 
     var gas = [], water = [];
     grid.forEach(function (p) {
-      var z = C.gasZ(c.z, p, inp.tempF, gammaW, gasOpt);
-      var bgw = C.gasBg(z, p, inp.tempF);                /* well stream, ft3/scf */
+      var gp = gasPoint(p, inp, gammaW, pcrit, T);
+      var bgw = gp.bg;                                   /* well stream, ft3/scf */
       var bg = bgw * fws;                                /* separator-gas basis  */
-      var rhoG = C.gasDensity(z, p, inp.tempF, gammaW);
-      var mug = c.mug === 'carrKobayashiBurrows'
-        ? C.MU_G.carrKobayashiBurrows(p / pcrit.ppc, tpr, inp.tempF, gammaW, gasOpt)
-        : C.MU_G.leeGonzalezEakin(rhoG, inp.tempF, gammaW);
       gas.push({
-        p: p, rv: cgr, z: z, bg: bg, bgw: bgw, bgRbMscf: bg * 1000 / 5.614583,
-        eg: 1 / bg, mug: mug, rhoG: rhoG,
-        cg: C.gasCompressibility(c.z, p, inp.tempF, gammaW, gasOpt)
+        p: p, rv: cgr, z: gp.z, bg: bg, bgw: bgw, bgRbMscf: bg * 1000 / 5.614583,
+        eg: 1 / bg, mug: gp.mug, rhoG: gp.rhoG, cg: gp.cg
       });
       var bw = C.waterBw(p, inp.tempF);
       water.push({
@@ -396,8 +476,9 @@
       rhoWsc: C.waterDensitySC(inp.salinity),
       pcrit: pcrit, gas: gas, water: water,
       /* no saturation pressure exists in the reservoir for either fluid */
-      psat: null
+      psat: null, tuning: T.active ? T : null
     };
+    Object.defineProperty(out, 'at', { value: at, enumerable: false });
     out.warnings = gasWarnings(inp, out).concat(gasTableChecks(out));
     return out;
   }
@@ -418,5 +499,5 @@
   }
 
   return { build: buildAny, buildOil: build, buildGas: buildGas, DEFAULTS: DEFAULTS,
-           pressureGrid: pressureGrid, rsbFromPb: rsbFromPb };
+           pressureGrid: pressureGrid, rsbFromPb: rsbFromPb, TUNING_KEYS: TUNING_KEYS };
 });

@@ -161,13 +161,7 @@
         </select></div>
     </fieldset>
 
-    <fieldset class="oil-only">
-      <legend>Laboratory calibration <span class="unit">optional</span></legend>
-      <p class="hint">Enter measured PVT data to anchor the correlations. Leave blank to use them unadjusted.</p>
-      <div class="field"><label for="calPb">Measured Pb <span class="unit" data-unit="p">psia</span></label><input type="number" id="calPb" step="10" placeholder="&mdash;"></div>
-      <div class="field"><label for="calBob">Measured Bo at Pb <span class="unit" data-unit="bo">bbl/STB</span></label><input type="number" id="calBob" step="0.01" placeholder="&mdash;"></div>
-      <div class="field"><label for="calMuod">Measured dead-oil &mu; <span class="unit">cp</span></label><input type="number" id="calMuod" step="0.1" placeholder="&mdash;"></div>
-    </fieldset>
+    <p class="hint">Laboratory data and correlation tuning live on the <strong>Lab data &amp; tuning</strong> tab.</p>
 
     <div class="export-bar" style="margin-top:14px">
       <button type="button" id="btnReset" class="ghost">Reset defaults</button>
@@ -182,6 +176,7 @@
       <button type="button" role="tab" id="tab-charts" aria-controls="panel-charts" aria-selected="false">Charts</button>
       <button type="button" role="tab" id="tab-tables" aria-controls="panel-tables" aria-selected="false">Tables</button>
       <button type="button" role="tab" id="tab-compare" aria-controls="panel-compare" aria-selected="false">Correlation spread</button>
+      <button type="button" role="tab" id="tab-lab" aria-controls="panel-lab" aria-selected="false">Lab data &amp; tuning</button>
       <button type="button" role="tab" id="tab-export" aria-controls="panel-export" aria-selected="false">Export</button>
       <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false">Method</button>
     </div>
@@ -221,6 +216,43 @@
       <p class="hint">Every correlation in the library, evaluated on the current fluid. The spread is the honest uncertainty band when no laboratory data is available.</p>
       <div class="chart-grid" id="compareCharts"></div>
       <div class="table-wrap" style="margin-top:14px"><table id="compareTable"></table></div>
+    </section>
+
+    <section id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" hidden>
+      <div class="lab-step">
+        <h2>1. Laboratory data</h2>
+        <p class="hint">Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub> &mdash; the basis a simulator uses &mdash; not raw differential-liberation values. Leave any cell blank. <span class="oil-only">Rows above the bubble point carry the undersaturated B<sub>o</sub> and oil viscosity; gas z and viscosity are the liberated gas.</span><span class="gas-only" hidden>z and viscosity are those of the reservoir gas.</span> Copy a block from a spreadsheet and paste it into any cell.</p>
+        <div class="lab-scalars oil-only">
+          <div class="field"><label for="labPb">Measured bubble point <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPb" step="10" placeholder="&mdash;"></div>
+          <div class="field"><label for="labMuod">Dead-oil viscosity at T<sub>res</sub> <span class="unit">cp</span></label><input type="number" id="labMuod" step="0.1" placeholder="&mdash;"></div>
+        </div>
+        <div class="table-wrap lab-wrap"><table id="labTable" class="lab-table"></table></div>
+        <div class="export-bar lab-actions">
+          <button type="button" id="btnAddRow">Add row</button>
+          <button type="button" id="btnClearLab" class="ghost">Clear laboratory data</button>
+          <span id="labStatus" class="hint" role="status"></span>
+        </div>
+      </div>
+
+      <div class="lab-step">
+        <h2>2. Rank the correlations</h2>
+        <p class="hint">Each correlation in the library is swapped in, tuned to the data and scored by its average absolute relative error (AARE). Untuned is the published correlation; tuned is after regression.</p>
+        <div class="export-bar">
+          <button type="button" id="btnRank">Rank correlations against the data</button>
+          <button type="button" id="btnUseBest" class="primary" hidden>Use the best-fitting correlations</button>
+          <span id="rankStatus" class="hint" role="status"></span>
+        </div>
+        <p id="rankHint" class="hint"></p>
+        <div class="table-wrap"><table id="rankTable"></table></div>
+      </div>
+
+      <div class="lab-step">
+        <h2>3. Tune and apply</h2>
+        <label class="switch"><input type="checkbox" id="tuneOn"> Tune the selected correlations to the laboratory data and use them for the tables and exports</label>
+        <div id="tuneNotes" style="margin-top:10px"></div>
+        <div class="table-wrap"><table id="tuneTable"></table></div>
+        <div class="chart-grid" id="labCharts" style="margin-top:14px"></div>
+      </div>
     </section>
 
     <section id="panel-export" role="tabpanel" aria-labelledby="tab-export" hidden>
@@ -273,13 +305,24 @@
         </ol>
         <p class="hint">In gas mode the <strong>barrel</strong> holds the reservoir gas from 1 Mscf of separator gas, with molecules thinning as it expands. The <strong>phase envelope</strong> has its critical point at the gas pseudo-critical properties and its cricondentherm below the reservoir temperature, and the separator point shows whether liquid forms at the surface.</p>
 
+        <h3 style="margin-top:14px">Tuning to laboratory data</h3>
+        <p class="hint">On the <em>Lab data &amp; tuning</em> tab, measured values regress one multiplier per property, in the order the properties depend on each other. Each fit minimises the AARE of its own property over its own points; the published correlation (multiplier 1) is always a candidate, so tuning never worsens the fit.</p>
+        <ol class="hint" style="padding-left:18px">
+          <li>R<sub>s</sub>(p): the curve is stretched in pressure, P<sub>b</sub> = P<sub>b,corr</sub> &times; m. A measured P<sub>b</sub> sets m exactly; otherwise m is fitted to the R<sub>s</sub> points.</li>
+          <li>Saturated B<sub>o</sub>: B<sub>o</sub> = 1 + m(B<sub>o,corr</sub> &minus; 1).</li>
+          <li>Undersaturated B<sub>o</sub>: c<sub>o</sub> is scaled by m.</li>
+          <li>Viscosity: a measured dead-oil viscosity scales &mu;<sub>od</sub> exactly and the saturated points then scale &mu;<sub>ob</sub>; without it, the saturated points scale &mu;<sub>od</sub>. Above P<sub>b</sub>, m scales the rise &mu;<sub>o</sub> &minus; &mu;<sub>ob</sub>.</li>
+          <li>Gas z: T<sub>pc</sub> and P<sub>pc</sub> are scaled together (coordinate descent), which carries through to B<sub>g</sub>, &rho;<sub>g</sub> and c<sub>g</sub>. Gas viscosity is then scaled by m.</li>
+        </ol>
+        <p class="hint">The multipliers and the fit before and after tuning are written into the header of every exported deck.</p>
+
         <h3 style="margin-top:14px">Limitations worth stating in a report</h3>
         <ul class="hint" style="padding-left:18px">
           <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
           <li>In oil mode the gas table is a dry-gas PVDG with no vaporised oil (R<sub>v</sub>). Retrograde gas condensates are not modelled in either mode: below a dew point the liquid drop-out and R<sub>v</sub>(p) need a CCE/CVD study or a compositional model.</li>
           <li>The gas-mode CMG deck follows the <code>*GASWATER</code> / <code>*GASWATER_WITH_CONDENSATE</code> keyword set; check it on import into Builder, as CMG keyword sets vary between IMEX versions.</li>
           <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
-          <li>Calibration stretches the correlation to honour measured P<sub>b</sub> and B<sub>ob</sub>; it does not replace a laboratory CCE/DL study.</li>
+          <li>Tuning adjusts one multiplier per property; it bends a correlation towards the data but cannot change the shape of its curve. A multiplier that stops at its search limit means the correlation does not suit the fluid &mdash; rank the correlations and pick another.</li>
           <li>The phase envelope is a schematic construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data.</li>
         </ul>
         <h3 style="margin-top:14px">References</h3>
@@ -295,6 +338,7 @@
 
 <script src="js/correlations.js"></script>
 <script src="js/pvt-model.js"></script>
+<script src="js/tuning.js"></script>
 <script src="js/export.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/fluid-state.js"></script>
