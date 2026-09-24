@@ -236,14 +236,18 @@
 
       <div class="lab-step">
         <h2>2. Rank the correlations</h2>
-        <p class="hint">Each correlation in the library is swapped in, tuned to the data and scored by its average absolute relative error (AARE). Untuned is the published correlation; tuned is after regression.</p>
+        <p class="hint">Each correlation in the library is swapped in, tuned to the data and scored by its average absolute relative error (AARE). Untuned is the published correlation; tuned is after regression. The chart beside each table plots every candidate against the laboratory points. Choose the correlation to carry into tuning with the buttons in the first column &mdash; the best fit is preselected only when you ask for it.</p>
         <div class="export-bar">
           <button type="button" id="btnRank">Rank correlations against the data</button>
           <button type="button" id="btnUseBest" class="primary" hidden>Use the best-fitting correlations</button>
+          <div class="seg" id="rankCurves" role="group" aria-label="Correlation curves in the ranking charts" hidden>
+            <button type="button" id="rankCurvesRaw" aria-pressed="true">Published curves</button>
+            <button type="button" id="rankCurvesTuned" aria-pressed="false">Tuned curves</button>
+          </div>
           <span id="rankStatus" class="hint" role="status"></span>
         </div>
         <p id="rankHint" class="hint"></p>
-        <div class="table-wrap"><table id="rankTable"></table></div>
+        <div id="rankResults"></div>
       </div>
 
       <div class="lab-step">

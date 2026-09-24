@@ -376,7 +376,7 @@
           var mult = paramFor(fam.corr, r.tuning);
           /* count the points on the tuned saturated/undersaturated split */
           var nt = r.after[fam.prop].n + (fam.alt && r.after[fam.alt] ? r.after[fam.alt].n : 0);
-          return { corr: name, n: nt, aareRaw: raw, aareTuned: tuned, mult: mult };
+          return { corr: name, n: nt, aareRaw: raw, aareTuned: tuned, mult: mult, tuning: r.tuning };
         } catch (e) {
           return { corr: name, n: n, aareRaw: null, aareTuned: null, mult: null, error: e.message };
         }
