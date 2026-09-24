@@ -648,6 +648,8 @@ section('21. Laboratory data: tuning and correlation ranking');
   ok('ranking picks the correlation the data came from for Rs', fam('pb').best === 'standing', fam('pb') && fam('pb').best);
   ok('ranking picks the correlation the data came from for Bo', fam('bo').best === 'standing', fam('bo') && fam('bo').best);
   ok('ranking covers all nine oil-mode families', sc.length === 9, sc.length);
+  ok('every ranked candidate carries its own tuning, so its tuned curve can be drawn',
+     sc.every(function (f) { return f.rows.every(function (r) { return r.error || (r.tuning && r.tuning.pbMult > 0); }); }));
 
   /* gas reservoir */
   var gi = { fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12, apiC: 58, tempF: 230, pMax: 6000 };

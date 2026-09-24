@@ -394,3 +394,22 @@ tr.at-bound { box-shadow: inset 2px 0 0 var(--warning); }
 .legend-key.dashed { background: none !important; border-top: 2px dashed var(--slot-7); height: 0; }
 button:disabled { opacity: 0.5; cursor: default; }
 .table-wrap:has(> table:empty) { display: none; }
+
+/* ranking: one block per correlation family, table beside its chart */
+.rank-family { margin-top: 18px; }
+.rank-family h3 { font-size: 14px; margin-bottom: 4px; }
+.rank-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 6px; }
+@media (max-width: 1250px) { .rank-body { grid-template-columns: minmax(0, 1fr); } }
+.rank-body th, .rank-body td { padding: 7px 8px; }
+.rank-body td:first-child, .rank-body th:first-child { width: 36px; text-align: center; }
+.rank-body td:nth-child(2), .rank-body th:nth-child(2) { text-align: left; }
+.rank-body input[type="radio"] { width: auto; accent-color: var(--accent); margin: 0; cursor: pointer; }
+.rank-body label { cursor: pointer; }
+tr.is-selected td { font-weight: 600; }
+tr.is-selected { box-shadow: inset 2px 0 0 var(--accent); }
+.best-badge {
+  margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 45%, transparent);
+}
+.series-line.bold { stroke-width: 3; }
+.series-line.muted { stroke-width: 1.5; opacity: 0.5; }

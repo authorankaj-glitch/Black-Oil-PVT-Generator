@@ -231,8 +231,12 @@ separator-adjusted R<sub>s</sub> and B<sub>o</sub>, the basis simulators use.
 
 1. **Rank** &mdash; each correlation family is evaluated with every member
    swapped in, tuned, and scored by average absolute relative error (AARE)
-   before and after tuning. *Use the best-fitting correlations* applies the
-   winners to the sidebar.
+   before and after tuning. Beside each family's table a chart plots every
+   candidate against the laboratory points, as published or after its own
+   tuning (toggle above the results), with the selected correlation drawn
+   bold. The radio button in each row chooses the correlation carried into
+   tuning &mdash; any candidate, not only the best fit &mdash; and updates the
+   sidebar; *Use the best-fitting correlations* picks every winner at once.
 2. **Tune** &mdash; one multiplier per property, regressed in dependency order,
    each against its own points (`js/tuning.js`):
 

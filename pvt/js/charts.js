@@ -60,7 +60,9 @@
    *                                  scatter: true draws markers only (laboratory
    *                                  points); the crosshair tooltip follows the
    *                                  line series; dashed: true for a reference
-   *                                  curve (the untuned correlation)
+   *                                  curve (the untuned correlation); bold: true
+   *                                  and muted: true to single out one curve
+   *                                  among several alternatives
    *   marker: { x, label },          vertical annotation (e.g. Pb)
    *   fmtX, fmtY                     value formatters for the tooltip
    * }
@@ -208,7 +210,8 @@
       var d = s.points.map(function (p, i) {
         return (i ? 'L' : 'M') + sx(p.x).toFixed(2) + ' ' + sy(p.y).toFixed(2);
       }).join(' ');
-      svg.appendChild(el('path', { class: 'series-line slot-' + s.slot + (s.dashed ? ' dashed' : ''), d: d }));
+      svg.appendChild(el('path', { class: 'series-line slot-' + s.slot + (s.dashed ? ' dashed' : '') +
+        (s.bold ? ' bold' : '') + (s.muted ? ' muted' : ''), d: d }));
       var last = s.points[s.points.length - 1];
       svg.appendChild(el('circle', { class: 'series-dot slot-' + s.slot,
         cx: sx(last.x), cy: sy(last.y), r: 4 }));

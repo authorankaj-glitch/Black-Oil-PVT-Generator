@@ -1160,46 +1160,192 @@
     setTimeout(step, 0);
   }
 
+  /* Which curves the ranking charts draw: the published correlations or
+     each one after its own tuning. */
+  var rankCurveMode = 'raw';
+
+  /* Chart of one family: every candidate on a common pressure grid (so the
+     tooltip compares them at the same pressure) and the laboratory points.
+     Curves are cached on the family, per mode, in field units. */
+  var RANK_PLOT = {
+    pb: { col: 'rs', kind: 'rs', title: 'Solution GOR' },
+    bo: { col: 'bo', kind: 'bo', title: 'Oil formation volume factor' },
+    co: { col: 'bo', kind: 'bo', title: 'Oil formation volume factor' },
+    muod: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    muob: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    muou: { col: 'muo', kind: 'mu', title: 'Oil viscosity' },
+    z: { col: 'z', kind: null, title: 'Gas z-factor' },
+    pcrit: { col: 'z', kind: null, title: 'Gas z-factor' },
+    mug: { col: 'mug', kind: 'mu', title: 'Gas viscosity' }
+  };
+
+  function familyCurves(fam, inp, data) {
+    fam.curves = fam.curves || {};
+    if (fam.curves[rankCurveMode]) return fam.curves[rankCurveMode];
+    var plot = RANK_PLOT[fam.corr], part = plot.col === 'z' || plot.col === 'mug' ? 'gas' : 'oil';
+    var lo = inp.pMin, hi = inp.pMax;
+    data.rows.forEach(function (r) { lo = Math.min(lo, r.p); hi = Math.max(hi, r.p); });
+    if (data.pb) hi = Math.max(hi, data.pb);
+    var grid = [], n = 60, i;
+    for (i = 0; i <= n; i++) grid.push(lo + (hi - lo) * i / n);
+    var out = {};
+    fam.rows.forEach(function (r) {
+      var ci = JSON.parse(JSON.stringify(inp));
+      ci.corr[fam.corr] = r.corr;
+      ci.tuning = rankCurveMode === 'tuned' ? r.tuning : null;
+      ci.pointsOnly = true;
+      try {
+        var m = Model.build(ci);
+        out[r.corr] = grid.map(function (p) { return { p: p, v: m.at(p, part)[plot.col] }; })
+          .filter(function (q) { return isFinite(q.v); });
+      } catch (e) { out[r.corr] = []; }
+    });
+    fam.curves[rankCurveMode] = out;
+    return out;
+  }
+
+  function familyChart(host, fam, sel, inp) {
+    var plot = RANK_PLOT[fam.corr];
+    var data = Tune.normalize(inp.lab, inp.fluid);
+    var curves = familyCurves(fam, inp, data);
+    var labPts = data.rows.filter(function (r) { return r[plot.col] !== null; })
+      .map(function (r) { return { p: r.p, v: r[plot.col] }; });
+    /* the scalar measurements belong on the chart of the family they tune */
+    if (fam.corr === 'pb' && data.pb && inp.spec !== 'pb' && inp.rsb > 0) labPts.push({ p: data.pb, v: inp.rsb });
+    if (fam.corr === 'muod' && data.muod) labPts.push({ p: 14.696, v: data.muod });
+    labPts.sort(function (a, b) { return a.p - b.p; });
+
+    /* the selected correlation first (it drives the tooltip), drawn bold */
+    var order = fam.rows.map(function (r) { return r.corr; }).sort(function (a, b) {
+      return (b === sel) - (a === sel);
+    });
+    var series = order.map(function (c) {
+      var k = fam.rows.map(function (r) { return r.corr; }).indexOf(c);
+      var tags = [];
+      if (c === fam.best) tags.push('best');
+      if (c === sel) tags.push('selected');
+      return {
+        name: (CORR_NAMES[c] || c) + (tags.length ? ' (' + tags.join(', ') + ')' : ''),
+        slot: (k % 7) + 1, bold: c === sel, muted: c !== sel,
+        points: curves[c].map(function (q) { return { x: conv('p', q.p), y: kindConv(plot.kind, q.v) }; })
+      };
+    }).filter(function (s) { return s.points.length; });
+    series.push({ name: 'Laboratory', slot: 8, scatter: true, points: labPts.map(function (q) {
+      return { x: conv('p', q.p), y: kindConv(plot.kind, q.v) };
+    }) });
+    chartInto(host, 'rank_' + fam.corr, {
+      title: plot.title,
+      subtitle: (rankCurveMode === 'tuned' ? 'Each correlation after its own tuning' : 'Published correlations, untuned') +
+        ', against the laboratory points',
+      xLabel: 'Pressure (' + label('p') + ')', yLabel: kindLabel(plot.kind), xUnit: label('p'),
+      series: series, endLabels: false,
+      onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
+      fmtX: function (v) { return v.toFixed(uu('p').d); },
+      fmtY: function (v) { var d = kindDigits(plot.kind); return d < 0 ? v.toExponential(3) : v.toFixed(d); }
+    });
+  }
+
   function renderScreen() {
-    var tbl = $('rankTable'), useBtn = $('btnUseBest');
-    tbl.textContent = '';
+    var host = $('rankResults'), useBtn = $('btnUseBest');
+    host.textContent = '';
     var fresh = screenResult && screenKey === rankKey();
     useBtn.hidden = !fresh;
+    $('rankCurves').hidden = !screenResult;
+    $('rankCurvesRaw').setAttribute('aria-pressed', String(rankCurveMode === 'raw'));
+    $('rankCurvesTuned').setAttribute('aria-pressed', String(rankCurveMode === 'tuned'));
     if (!screenResult) { $('rankHint').textContent = ''; return; }
     $('rankHint').textContent = fresh ? ''
       : 'The fluid inputs or the laboratory data have changed since this ranking - rank again before using it.';
-    var th = document.createElement('thead'), hr = document.createElement('tr');
-    ['Correlation', 'Untuned AARE', 'Tuned AARE', 'Multiplier', ''].forEach(function (h) {
-      var e = document.createElement('th'); e.textContent = h; hr.appendChild(e);
-    });
-    th.appendChild(hr); tbl.appendChild(th);
-    var tb = document.createElement('tbody'), inp = readInputs(), changes = 0;
+    var inp = readInputs(), changes = 0;
     screenResult.forEach(function (fam) {
       var sel = inp.corr[fam.corr];
-      var gr = document.createElement('tr');
-      gr.className = 'group-row';
-      var gtd = document.createElement('td'); gtd.colSpan = 5;
-      var nPts = fam.rows.reduce(function (a, r) { return r.corr === (fam.best || sel) ? r.n : a; }, fam.rows[0] ? fam.rows[0].n : 0);
-      gtd.textContent = fam.label + ' (' + nPts + ' points)';
-      gr.appendChild(gtd); tb.appendChild(gr);
       if (fam.best && fam.best !== sel) changes++;
+      var nPts = fam.rows.reduce(function (a, r) { return r.corr === (fam.best || sel) ? r.n : a; },
+        fam.rows[0] ? fam.rows[0].n : 0);
+
+      var block = document.createElement('div');
+      block.className = 'rank-family';
+      var head = document.createElement('h3');
+      head.textContent = fam.label + ' (' + nPts + ' point' + (nPts === 1 ? '' : 's') + ')';
+      block.appendChild(head);
+
+      /* with one or two points every candidate can be tuned to fit exactly;
+         say so, since the ranking then rests on the size of the adjustment */
+      var tuned = fam.rows.filter(function (r) { return r.aareTuned !== null; });
+      if (tuned.length > 1 && tuned.every(function (r) { return r.aareTuned < 0.1; })) {
+        var why = document.createElement('p');
+        why.className = 'hint';
+        why.textContent = 'Every correlation can be tuned to fit ' + (nPts === 1 ? 'this point' : 'these points') +
+          ' exactly, so the ranking goes to the one needing the smallest adjustment (multiplier closest to 1). ' +
+          'More laboratory points would separate them.';
+        block.appendChild(why);
+      }
+
+      var body = document.createElement('div');
+      body.className = 'rank-body';
+      var wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      var tbl = document.createElement('table');
+      var th = document.createElement('thead'), hr = document.createElement('tr');
+      ['Use', 'Correlation', 'Untuned AARE', 'Tuned AARE', 'Multiplier'].forEach(function (h) {
+        var e = document.createElement('th'); e.textContent = h; hr.appendChild(e);
+      });
+      th.appendChild(hr); tbl.appendChild(th);
+      var tb = document.createElement('tbody');
       fam.rows.forEach(function (r) {
         var tr = document.createElement('tr');
-        if (r.corr === fam.best) tr.className = 'is-best';
-        var tags = [];
-        if (r.corr === fam.best) tags.push('best');
-        if (r.corr === sel) tags.push('selected');
-        [CORR_NAMES[r.corr] || r.corr, fmtPct(r.aareRaw), fmtPct(r.aareTuned),
-         r.mult ? '× ' + r.mult.toFixed(3) : '–', tags.join(', ')].forEach(function (t) {
+        if (r.corr === sel) tr.className = 'is-selected';
+        var tdR = document.createElement('td');
+        var rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'rank-' + fam.corr; rb.value = r.corr;
+        rb.checked = r.corr === sel;
+        rb.dataset.family = fam.corr;
+        rb.id = 'rank-' + fam.corr + '-' + r.corr;
+        rb.setAttribute('aria-label', 'Use ' + (CORR_NAMES[r.corr] || r.corr) + ' for ' + fam.label.toLowerCase());
+        tdR.appendChild(rb); tr.appendChild(tdR);
+        var tdN = document.createElement('td');
+        var lb = document.createElement('label');
+        lb.htmlFor = rb.id;
+        lb.textContent = CORR_NAMES[r.corr] || r.corr;
+        tdN.appendChild(lb);
+        if (r.corr === fam.best) {
+          var badge = document.createElement('span');
+          badge.className = 'best-badge'; badge.textContent = 'best fit';
+          tdN.appendChild(badge);
+        }
+        tr.appendChild(tdN);
+        [fmtPct(r.aareRaw), fmtPct(r.aareTuned), r.mult ? '× ' + r.mult.toFixed(3) : '–'].forEach(function (t) {
           var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
         });
         tb.appendChild(tr);
       });
+      tbl.appendChild(tb);
+      wrap.appendChild(tbl);
+      body.appendChild(wrap);
+      var chartHost = document.createElement('div');
+      body.appendChild(chartHost);
+      block.appendChild(body);
+      host.appendChild(block);
+      familyChart(chartHost, fam, sel, inp);
     });
-    tbl.appendChild(tb);
     useBtn.disabled = !changes;
     useBtn.textContent = changes ? 'Use the best-fitting correlations (' + changes + ' change' + (changes === 1 ? '' : 's') + ')'
       : 'The best-fitting correlations are selected';
+  }
+
+  /* A choice in the ranking goes straight to the sidebar select, so the
+     tuning step - and the tables and exports - use it. */
+  function chooseCorrelation(family, name) {
+    if (!CORR_SELECT[family]) return;
+    $(CORR_SELECT[family]).value = name;
+    $('preset').value = '';
+    recompute();
+  }
+
+  function setRankCurves(mode) {
+    if (mode === rankCurveMode) return;
+    rankCurveMode = mode;
+    renderScreen();
   }
 
   function useBest() {
@@ -1259,6 +1405,11 @@
     });
     $('btnRank').addEventListener('click', runRanking);
     $('btnUseBest').addEventListener('click', useBest);
+    $('rankResults').addEventListener('change', function (ev) {
+      if (ev.target.type === 'radio' && ev.target.dataset.family) chooseCorrelation(ev.target.dataset.family, ev.target.value);
+    });
+    $('rankCurvesRaw').addEventListener('click', function () { setRankCurves('raw'); });
+    $('rankCurvesTuned').addEventListener('click', function () { setRankCurves('tuned'); });
   }
 
   /* ---------------- export ---------------- */
