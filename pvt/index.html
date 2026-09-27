@@ -10,21 +10,33 @@
 <body>
 <header class="topbar">
   <div class="brand">
-    <h1>Black-Oil PVT Generator</h1>
-    <span>Industry-standard correlations for oil and gas reservoirs &mdash; with simulator-ready export</span>
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+      <rect width="32" height="32" rx="7" fill="#1f63c6"/>
+      <path d="M16 5.5c-3.6 5-6.5 8.9-6.5 12.6a6.5 6.5 0 0 0 13 0C22.5 14.4 19.6 10.5 16 5.5z" fill="#ffffff"/>
+      <path d="M11.6 19.2h8.8" stroke="#1f63c6" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="14" cy="16.4" r="1" fill="#eb6834"/><circle cx="17.6" cy="14.6" r="0.8" fill="#eb6834"/>
+    </svg>
+    <div class="brand-text">
+      <h1>Black-Oil PVT Generator <span class="brand-tag">PVT</span></h1>
+      <span class="brand-sub">Correlation-based fluid properties for oil and gas reservoirs &middot; simulator-ready export</span>
+    </div>
   </div>
   <div class="topbar-actions">
+    <span class="topbar-label" aria-hidden="true">Units</span>
     <div class="seg" role="group" aria-label="Unit system">
       <button type="button" id="unitField" aria-pressed="true">Field</button>
       <button type="button" id="unitMetric" aria-pressed="false">Metric</button>
     </div>
-    <button type="button" id="themeToggle" class="ghost" aria-label="Switch colour theme">Theme</button>
+    <button type="button" id="themeToggle" class="icon-btn" aria-label="Switch colour theme" title="Switch light / dark theme">
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg>
+    </button>
   </div>
 </header>
 
 <div class="layout">
   <!-- ------------------------------------------------ inputs ------ -->
   <form class="panel sidebar" id="inputs" autocomplete="off">
+    <div class="sidebar-head"><h2>Case inputs</h2><span>Recalculates as you type</span></div>
     <fieldset>
       <legend>Reservoir fluid system</legend>
       <div class="seg fluid-seg" role="group" aria-label="Reservoir fluid for the PVT calculation">
@@ -163,9 +175,9 @@
 
     <p class="hint">Laboratory data and correlation tuning live on the <strong>Lab data &amp; tuning</strong> tab.</p>
 
-    <div class="export-bar" style="margin-top:14px">
-      <button type="button" id="btnReset" class="ghost">Reset defaults</button>
-      <button type="button" id="btnShare" class="ghost">Copy link to this case</button>
+    <div class="export-bar sidebar-actions">
+      <button type="button" id="btnReset">Reset defaults</button>
+      <button type="button" id="btnShare">Copy link to case</button>
     </div>
   </form>
 
@@ -220,7 +232,7 @@
 
     <section id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" hidden>
       <div class="lab-step">
-        <h2>1. Laboratory data</h2>
+        <h2><span class="step-no">1</span>Laboratory data</h2>
         <p class="hint">Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub> &mdash; the basis a simulator uses &mdash; not raw differential-liberation values. Leave any cell blank. <span class="oil-only">Rows above the bubble point carry the undersaturated B<sub>o</sub> and oil viscosity; gas z and viscosity are the liberated gas.</span><span class="gas-only" hidden>z and viscosity are those of the reservoir gas.</span> Copy a block from a spreadsheet and paste it into any cell.</p>
         <div class="lab-scalars oil-only">
           <div class="field"><label for="labPb">Measured bubble point <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPb" step="10" placeholder="&mdash;"></div>
@@ -235,7 +247,7 @@
       </div>
 
       <div class="lab-step">
-        <h2>2. Rank the correlations</h2>
+        <h2><span class="step-no">2</span>Rank the correlations</h2>
         <p class="hint">Each correlation in the library is swapped in, tuned to the data and scored by its average absolute relative error (AARE). Untuned is the published correlation; tuned is after regression. The chart beside each table plots every candidate against the laboratory points. Choose the correlation to carry into tuning with the buttons in the first column &mdash; the best fit is preselected only when you ask for it.</p>
         <div class="export-bar">
           <button type="button" id="btnRank">Rank correlations against the data</button>
@@ -251,7 +263,7 @@
       </div>
 
       <div class="lab-step">
-        <h2>3. Tune and apply</h2>
+        <h2><span class="step-no">3</span>Tune and apply</h2>
         <label class="switch"><input type="checkbox" id="tuneOn"> Tune the selected correlations to the laboratory data and use them for the tables and exports</label>
         <div id="tuneNotes" style="margin-top:10px"></div>
         <div class="table-wrap"><table id="tuneTable"></table></div>
@@ -278,10 +290,10 @@
     </section>
 
     <section id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
-      <div class="panel">
-        <h2 style="font-size:16px">What this tool does</h2>
+      <div class="panel doc">
+        <h2>What this tool does</h2>
         <p class="hint">It builds a consistent black-oil PVT model from routine field inputs &mdash; stock-tank oil gravity, separator gas gravity, reservoir temperature and either the solution GOR or the bubble-point pressure &mdash; and writes it out in the formats reservoir simulators read.</p>
-        <h3 style="margin-top:14px">Calculation sequence</h3>
+        <h3>Calculation sequence</h3>
         <ol class="hint" style="padding-left:18px">
           <li>P<sub>b</sub> from R<sub>sb</sub> (or R<sub>sb</sub> back-solved from a measured P<sub>b</sub>).</li>
           <li>R<sub>s</sub>(p) below P<sub>b</sub> by numerical inversion of the same P<sub>b</sub> equation, so R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub> exactly.</li>
@@ -291,14 +303,14 @@
           <li>Water: McCain (1991) B<sub>w</sub> and &mu;<sub>w</sub>, Osif (1988) c<sub>w</sub>. Salinity is entered in ppm (mg of NaCl per kg of brine) and converted to the weight percent the correlations use: wt % = ppm / 10 000.</li>
           <li>Each PVTO record carries its own saturation pressure and undersaturated branch, which is what ECLIPSE expects for live oil.</li>
         </ol>
-        <h3 style="margin-top:14px">The two cursor-linked pictures</h3>
+        <h3>The two cursor-linked pictures</h3>
         <p class="hint">The barrel and the phase envelope on the Summary tab share one pressure cursor with every chart on the page. Hover a curve, drag the slider, drag the phase diagram, or press Play depletion.</p>
         <ul class="hint" style="padding-left:18px">
           <li><strong>Barrel</strong> &mdash; one stock-tank barrel of oil plus its solution gas at the cursor pressure. Liquid volume is B<sub>o</sub>(p); free gas volume is [R<sub>sb</sub> &minus; R<sub>s</sub>(p)]&middot;B<sub>g</sub>(p)/5.614583. Specks in the liquid are dissolved gas (density tracks R<sub>s</sub>/R<sub>sb</sub>); the cap and the rising bubbles are gas that has come out of solution.</li>
           <li><strong>Phase envelope</strong> &mdash; <em>schematic</em>. A true envelope needs a compositional EOS; this one is built to pass exactly through the calculated (T<sub>res</sub>, P<sub>b</sub>), with the critical temperature placed by a volatility index from R<sub>sb</sub> and API gravity. The bubble point is calculated; the shape around it is constructed. Use it to read the fluid type and the depletion path, not to quote a cricondentherm.</li>
         </ul>
 
-        <h3 style="margin-top:14px">Gas reservoirs (dry gas and wet gas)</h3>
+        <h3>Gas reservoirs (dry gas and wet gas)</h3>
         <p class="hint">Switch <em>Reservoir fluid system</em> to <strong>Gas reservoir</strong>. Every gas property is reported per standard volume of <em>separator</em> gas &mdash; the basis ECLIPSE PVDG and CMG <code>*PVTG</code> use. Both gas types are single-phase in the reservoir at every pressure.</p>
         <ol class="hint" style="padding-left:18px">
           <li>Reservoir-gas gravity from the separator gas recombined with its condensate (McCain, 1990): &gamma;<sub>w</sub> = (R&gamma;<sub>g</sub> + 4584&gamma;<sub>o</sub>) / (R + 132800&gamma;<sub>o</sub>/M<sub>o</sub>), with R = 10<sup>6</sup>/CGR and M<sub>o</sub> = 5954/(API &minus; 8.811). A dry gas is its own reservoir gas.</li>
@@ -309,7 +321,7 @@
         </ol>
         <p class="hint">In gas mode the <strong>barrel</strong> holds the reservoir gas from 1 Mscf of separator gas, with molecules thinning as it expands. The <strong>phase envelope</strong> has its critical point at the gas pseudo-critical properties and its cricondentherm below the reservoir temperature, and the separator point shows whether liquid forms at the surface.</p>
 
-        <h3 style="margin-top:14px">Tuning to laboratory data</h3>
+        <h3>Tuning to laboratory data</h3>
         <p class="hint">On the <em>Lab data &amp; tuning</em> tab, measured values regress one multiplier per property, in the order the properties depend on each other. Each fit minimises the AARE of its own property over its own points; the published correlation (multiplier 1) is always a candidate, so tuning never worsens the fit.</p>
         <ol class="hint" style="padding-left:18px">
           <li>R<sub>s</sub>(p): the curve is stretched in pressure, P<sub>b</sub> = P<sub>b,corr</sub> &times; m. A measured P<sub>b</sub> sets m exactly; otherwise m is fitted to the R<sub>s</sub> points.</li>
@@ -320,7 +332,7 @@
         </ol>
         <p class="hint">The multipliers and the fit before and after tuning are written into the header of every exported deck.</p>
 
-        <h3 style="margin-top:14px">Limitations worth stating in a report</h3>
+        <h3>Limitations worth stating in a report</h3>
         <ul class="hint" style="padding-left:18px">
           <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
           <li>In oil mode the gas table is a dry-gas PVDG with no vaporised oil (R<sub>v</sub>). Retrograde gas condensates are not modelled in either mode: below a dew point the liquid drop-out and R<sub>v</sub>(p) need a CCE/CVD study or a compositional model.</li>
@@ -329,7 +341,7 @@
           <li>Tuning adjusts one multiplier per property; it bends a correlation towards the data but cannot change the shape of its curve. A multiplier that stops at its search limit means the correlation does not suit the fluid &mdash; rank the correlations and pick another.</li>
           <li>The phase envelope is a schematic construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data.</li>
         </ul>
-        <h3 style="margin-top:14px">References</h3>
+        <h3>References</h3>
         <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
       </div>
     </section>
@@ -337,7 +349,10 @@
 </div>
 
 <footer class="foot">
-  Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.
+  <div class="foot-inner">
+    <span>Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.</span>
+    <span class="foot-meta">Runs entirely in your browser &middot; MIT licence</span>
+  </div>
 </footer>
 
 <script src="js/correlations.js"></script>
