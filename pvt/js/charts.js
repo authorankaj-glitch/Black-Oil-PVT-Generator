@@ -56,7 +56,7 @@
   /*
    * opts = {
    *   title, subtitle, xLabel, yLabel,
-   *   series: [{ name, slot (1-8), points: [{x, y}], scatter }],
+   *   series: [{ name, slot (1-8), points: [{x, y}], scatter, legend }],
    *                                  scatter: true draws markers only (laboratory
    *                                  points); the crosshair tooltip follows the
    *                                  line series; dashed: true for a reference
@@ -91,10 +91,13 @@
     }
     this.root.appendChild(head);
 
-    if (o.series.length > 1) {
+    /* legend: false keeps a series (e.g. the points belonging to a curve
+       already in the legend) out of the legend */
+    var inLegend = o.series.filter(function (s) { return s.legend !== false; });
+    if (inLegend.length > 1) {
       var leg = document.createElement('ul');
       leg.className = 'legend';
-      o.series.forEach(function (s) {
+      inLegend.forEach(function (s) {
         var li = document.createElement('li');
         var key = document.createElement('span');
         key.className = 'legend-key slot-' + s.slot + (s.scatter ? ' scatter' : s.dashed ? ' dashed' : '');

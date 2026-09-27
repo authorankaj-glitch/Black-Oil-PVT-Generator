@@ -1,4 +1,7 @@
 /*
+ * Black-Oil PVT Generator
+ * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ *
  * app.js -- UI wiring for the PVT generator.
  *
  * Two fluid systems share one page: an oil reservoir (black oil with its
@@ -14,6 +17,10 @@
  * units. With tuning switched on, every recompute regresses the selected
  * correlations against it (tuning.js) and the tuned model feeds the charts,
  * tables and exports; the untuned model is kept for the match charts.
+ *
+ * The PVT samples tab holds several PVT reports (samples.js screens them
+ * and fits one set of multipliers to the accepted ones). With its field-wide
+ * tuning switched on, that tuning takes precedence over the Lab data tab.
  */
 (function () {
   'use strict';
@@ -34,6 +41,7 @@
       c: { f: function (x) { return x; }, inv: function (x) { return x; }, u: '1/psi', d: -1 },
       mu: { f: function (x) { return x; }, inv: function (x) { return x; }, u: 'cp', d: 4 },
       cgr: { f: function (x) { return x; }, inv: function (x) { return x; }, u: 'STB/MMscf', d: 2 },
+      len: { f: function (x) { return x; }, inv: function (x) { return x; }, u: 'ft', d: 0 },
       none: { f: function (x) { return x; }, inv: function (x) { return x; }, u: '\u2013', d: 4 }
     },
     metric: {
@@ -47,6 +55,7 @@
       mu: { f: function (x) { return x; }, inv: function (x) { return x; }, u: 'mPa·s', d: 4 },
       /* 1 STB/MMscf = 0.158987 m3 / 28316.85 m3 -> 5.614583 sm3 per 1e6 sm3 */
       cgr: { f: function (x) { return x * 5.614583; }, inv: function (x) { return x / 5.614583; }, u: 'sm³/10⁶sm³', d: 2 },
+      len: { f: function (x) { return x * 0.3048; }, inv: function (x) { return x / 0.3048; }, u: 'm', d: 1 },
       none: { f: function (x) { return x; }, inv: function (x) { return x; }, u: '–', d: 4 }
     }
   };
@@ -65,7 +74,7 @@
     api: null, gammaG: null, tempF: 'T', rsb: 'rs', pbMeas: 'p', pSepPsia: 'p',
     tSepF: 'T', yCO2: null, yH2S: null, yN2: null, salinity: null,
     pRefRock: 'p', rockComp: 'c', pMin: 'p', pMax: 'p', nSat: null, nUnsat: null,
-    labPb: 'p', labMuod: 'mu',
+    labPb: 'p', labMuod: 'mu', labPRes: 'p', labPwf: 'p', labGor: 'rs',
     cgr: 'cgr', apiC: null
   };
 
@@ -152,7 +161,7 @@
         pcrit: $('cPcrit').value, inertCorr: $('cInert').value,
         z: $('cZ').value, mug: $('cMug').value
       },
-      lab: labForModel(), tune: lab[fluid].tune
+      lab: labForModel(), tune: lab[fluid].tune, labMode: labMode
     };
   }
 
@@ -234,6 +243,10 @@
   function renderQc() {
     var qc = $('qc');
     qc.textContent = '';
+    if (model.tuning && fieldTuned) {
+      qc.appendChild(notice('info', 'i', 'These tables use the field-wide tuning fitted to ' + fieldTuned.perSample.length +
+        ' screened PVT sample' + (fieldTuned.perSample.length === 1 ? '' : 's') + ' - the PVT samples & tuning tab shows the screening and the fit.'));
+    }
     if (model.tuning && regression) {
       var n = regression.data.rows.length + (regression.data.pb ? 1 : 0) + (regression.data.muod ? 1 : 0);
       qc.appendChild(notice('info', 'i', 'These tables are tuned to ' + n + ' laboratory value' +
@@ -882,9 +895,10 @@
     leeGonzalezEakin: 'Lee-Gonzalez-Eakin', carrKobayashiBurrows: 'Carr-Kobayashi-Burrows'
   };
 
-  function emptyLab() { return { pb: null, muod: null, rows: [], tune: false }; }
+  function emptySampling() { return { type: 'bhs', pRes: null, pwf: null, gor: null }; }
+  function emptyLab() { return { pb: null, muod: null, rows: [], tune: false, sampling: emptySampling() }; }
   var lab = { oil: emptyLab(), gas: emptyLab() };
-  var baseModel = null, regression = null, tuneError = null;
+  var baseModel = null, regression = null, tuneError = null, fieldTuned = null;
   var screenResult = null, screenKey = null, screening = false;
 
   function finiteOrNull(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
@@ -892,6 +906,11 @@
     o = o || {};
     return {
       pb: finiteOrNull(o.pb), muod: finiteOrNull(o.muod), tune: !!o.tune,
+      sampling: {
+        type: o.sampling && o.sampling.type === 'sep' ? 'sep' : 'bhs',
+        pRes: finiteOrNull((o.sampling || {}).pRes), pwf: finiteOrNull((o.sampling || {}).pwf),
+        gor: finiteOrNull((o.sampling || {}).gor)
+      },
       rows: (o.rows || []).map(function (r) {
         var out = {};
         ['p', 'rs', 'bo', 'muo', 'z', 'mug'].forEach(function (k) { out[k] = finiteOrNull(r[k]); });
@@ -912,7 +931,10 @@
   function restoreLab(o) {
     var f = o.fluid === 'gas' ? 'gas' : 'oil';
     if (o.lab) {
+      /* case inputs carry the table but not the sampling conditions */
+      var keepSampling = lab[f] && lab[f].sampling;
       lab[f] = cleanLab(o.lab);
+      if (!o.lab.sampling && keepSampling) lab[f].sampling = keepSampling;
       lab[f].tune = !!o.tune;
     } else if (o.calib && (o.calib.pbMeas > 0 || o.calib.bobMeas > 0 || o.calib.muodMeas > 0)) {
       var c = o.calib;
@@ -936,6 +958,40 @@
                before: reg.before[pr.key].aare, after: reg.after[pr.key].aare };
     });
     return out;
+  }
+
+  /* Show the one-report sampling conditions in the inputs. */
+  function writeLabSampling() {
+    var sm = lab.oil.sampling || emptySampling();
+    lab.oil.sampling = sm;
+    $('labType').value = sm.type;
+    setInput('labPRes', sm.pRes); setInput('labPwf', sm.pwf); setInput('labGor', sm.gor);
+    $('rowLabPwf').hidden = sm.type !== 'bhs';
+    if (sm.pRes !== null || sm.pwf !== null || sm.gor !== null) $('labPwf').closest('details').open = true;
+  }
+
+  /* The one report as a sample, with the case's fluid description: the
+     same checks the several-report screening applies to each sample. */
+  function renderLabChecks() {
+    var host = $('labChecks');
+    host.textContent = '';
+    if (fluid !== 'oil' || !baseModel || !Tune.hasData(labForModel(), 'oil')) return;
+    var inp = baseModel.input;
+    var sm = lab.oil.sampling || emptySampling();
+    var q = Smp.qcSample(sampleBase(), {
+      id: 'case', name: 'This report', type: sm.type,
+      fluid: { api: inp.api, gammaG: inp.gammaG, rsb: baseModel.rsb, tempF: inp.tempF },
+      sampling: sm, lab: labForModel()
+    });
+    var h = document.createElement('h3');
+    h.className = 'screen-detail-head';
+    var st = q.checks.reduce(function (a, c) {
+      return { fail: 3, warn: 2, pass: 1, na: 0 }[c.status] > { fail: 3, warn: 2, pass: 1, na: 0 }[a] ? c.status : a;
+    }, 'na');
+    h.textContent = 'Data checks: ' + { pass: 'the report passes', warn: 'the report passes with warnings',
+      fail: 'the report fails - correct it before tuning', na: 'nothing to check yet' }[st];
+    host.appendChild(h);
+    renderCheckList(host, q.checks);
   }
 
   /* ---------- the editable table ---------- */
@@ -1082,6 +1138,7 @@
       notes.appendChild(notice('info', 'i', 'Tuning is off: the tables and exports use the published correlations. Switch it on to apply the regressed multipliers.'));
     }
 
+    renderLabChecks();
     renderScreen();
     renderMatchCharts(has);
   }
@@ -1387,6 +1444,18 @@
         labChanged(false);
       });
     });
+    writeLabSampling();
+    [['labPRes', 'pRes'], ['labPwf', 'pwf'], ['labGor', 'gor']].forEach(function (pr) {
+      $(pr[0]).addEventListener('input', function () {
+        lab.oil.sampling[pr[1]] = toField(pr[0]);
+        labChanged(false);
+      });
+    });
+    $('labType').addEventListener('change', function () {
+      lab.oil.sampling.type = $('labType').value;
+      $('rowLabPwf').hidden = lab.oil.sampling.type !== 'bhs';
+      labChanged(false);
+    });
     $('btnAddRow').addEventListener('click', function () {
       lab[fluid].rows.push({ p: null, rs: null, bo: null, muo: null, z: null, mug: null });
       renderLabTable();
@@ -1396,7 +1465,7 @@
     $('btnClearLab').addEventListener('click', function () {
       var keep = lab[fluid].tune;
       lab[fluid] = emptyLab(); lab[fluid].tune = keep;
-      if (fluid === 'oil') { setInput('labPb', null); setInput('labMuod', null); }
+      if (fluid === 'oil') { setInput('labPb', null); setInput('labMuod', null); writeLabSampling(); }
       labChanged(true);
     });
     $('tuneOn').addEventListener('change', function (ev) {
@@ -1432,27 +1501,99 @@
 
   function download() {
     var fmtName = $('fmtSel').value, u = $('fmtUnits').value;
-    var text = Exp.generate(model, fmtName, u);
     var name = Exp.filename(fmtName, u);
+    saveFile(name, Exp.generate(model, fmtName, u), function (saved, msg) {
+      $('copyStatus').textContent = saved ? 'Saved ' + saved + (/\.txt$/.test(saved) && fmtName !== 'csv' && fmtName !== 'json'
+        ? ' - remove the .txt suffix before loading it into the simulator.' : '.')
+        : msg + (msg === 'Download cancelled.' ? '' : ' Use Copy to clipboard instead.');
+    });
+  }
+
+  /* Hand a text file to the viewer. done(savedName) on success, or
+     done(null, message) when it was cancelled or cannot be saved here. */
+  function saveFile(name, text, done) {
     if (downloadsApi) {
       if (!/\.(csv|json|txt)$/i.test(name)) name += '.txt';
-      downloadsApi.save({ filename: name, data: text }).then(function () {
-        $('copyStatus').textContent = 'Saved ' + name + (/\.txt$/.test(name) && fmtName !== 'csv' && fmtName !== 'json'
-          ? ' - remove the .txt suffix before loading it into the simulator.' : '.');
-      }, function (e) {
+      downloadsApi.save({ filename: name, data: text }).then(function () { done(name); }, function (e) {
         var code = e && e.code;
-        $('copyStatus').textContent = code === 'declined' ? 'Download cancelled.'
-          : 'Download is not available here - use Copy to clipboard instead.';
+        done(null, code === 'declined' ? 'Download cancelled.' : 'Download is not available here.');
       });
       return;
     }
-    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var blob = new Blob([text], { type: /\.json$/i.test(name) ? 'application/json' : 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
     document.body.appendChild(a);
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    done(name);
+  }
+
+  /* ---------------- project files: save and reopen a session ---------------- */
+  var Proj = window.PVTProject;
+
+  function projectState() {
+    var other = fluid === 'oil' ? 'gas' : 'oil', inputs = {};
+    inputs[fluid] = { inputs: readInputs(), preset: $('preset').value };
+    var back = savedByFluid[other];
+    if (!back) { try { back = JSON.parse(localStorage.getItem('pvt.inputs.' + other)); } catch (e) { back = null; } }
+    inputs[other] = back && back.inputs ? back : null;
+    return { name: $('projectName').value, fluid: fluid, units: units, labMode: labMode,
+             inputs: inputs, lab: lab, samples: samples };
+  }
+
+  function projectSay(text) { $('projectStatus').textContent = text; }
+
+  function saveProject() {
+    var p = Proj.pack(projectState());
+    var name = Proj.filename(p.name, new Date(p.savedAt));
+    saveFile(name, JSON.stringify(p, null, 1), function (saved, msg) {
+      projectSay(saved ? 'Saved ' + saved + '. Open it later with Open project to carry on.' : msg);
+    });
+  }
+
+  /* Opening a project puts it where the page keeps its own state and
+     reloads, so it starts exactly as a returning visit would. */
+  function openProjectFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var p;
+      try { p = Proj.unpack(String(reader.result)); }
+      catch (e) { projectSay(e.message); return; }
+      try {
+        var cur = p.inputs[p.fluid];
+        localStorage.setItem('pvt.inputs', JSON.stringify(cur.inputs));
+        localStorage.setItem('pvt.preset', cur.preset || '');
+        ['oil', 'gas'].forEach(function (f) {
+          if (p.inputs[f]) localStorage.setItem('pvt.inputs.' + f, JSON.stringify(p.inputs[f]));
+          else localStorage.removeItem('pvt.inputs.' + f);
+        });
+        localStorage.setItem('pvt.units', p.units);
+        localStorage.setItem('pvt.labMode', p.labMode);
+        localStorage.setItem('pvt.lab', JSON.stringify(p.lab && p.lab.oil && p.lab.gas ? p.lab : { oil: emptyLab(), gas: emptyLab() }));
+        localStorage.setItem('pvt.samples', JSON.stringify(p.samples));
+        localStorage.setItem('pvt.projectName', p.name);
+      } catch (e) {
+        projectSay('This browser blocks the storage the page needs to open a project.');
+        return;
+      }
+      location.hash = '';
+      location.reload();
+    };
+    reader.onerror = function () { projectSay('The file could not be read.'); };
+    reader.readAsText(file);
+  }
+
+  function initProject() {
+    try { $('projectName').value = localStorage.getItem('pvt.projectName') || ''; } catch (e) { /* ignore */ }
+    $('projectName').addEventListener('input', function () {
+      try { localStorage.setItem('pvt.projectName', $('projectName').value); } catch (e) { /* ignore */ }
+    });
+    $('btnSaveProject').addEventListener('click', saveProject);
+    $('btnOpenProject').addEventListener('click', function () { $('projectFile').value = ''; $('projectFile').click(); });
+    $('projectFile').addEventListener('change', function (ev) { openProjectFile(ev.target.files[0]); });
   }
 
   /* ---------------- compute + render ---------------- */
@@ -1489,8 +1630,16 @@
       return;
     }
     /* regress the selected correlations against the laboratory data */
-    regression = null; tuneError = null;
-    if (inp.tune && Tune.hasData(inp.lab, inp.fluid)) {
+    regression = null; tuneError = null; fieldTuned = null;
+    var mode = effectiveMode();
+    var pooled = mode === 'several' && samples.fieldTune ? ensurePooledFit() : null;
+    if (pooled) {
+      /* field-wide tuning from the PVT samples tab */
+      inp.tuning = pooledPayload(pooled);
+      fieldTuned = pooled;
+      try { model = Model.build(inp); } catch (e) { tuneError = e.message; model = baseModel; }
+      delete inp.tuning;
+    } else if (mode === 'one' && inp.tune && Tune.hasData(inp.lab, inp.fluid)) {
       try {
         regression = Tune.regress(inp, inp.lab);
         inp.tuning = tuningPayload(regression);
@@ -1506,6 +1655,7 @@
     renderTable();
     renderCompare();
     renderLabResults();
+    renderSamples();
     renderExport();
     persist(inp);
   }
@@ -1514,6 +1664,841 @@
   function schedule() {
     clearTimeout(timer);
     timer = setTimeout(recompute, 120);
+  }
+
+  /* ================================================================ *
+   * PVT samples: screening several PVT reports and a field-wide fit
+   * ================================================================ */
+
+  var Smp = window.PVTSamples;
+
+  /* Scalar fields of a sample: where they live in the sample, and their unit kind. */
+  var SAMPLE_FIELDS = [
+    { k: 'api', grp: 'fluid', kind: null, head: 'Oil gravity', unit: 'API' },
+    { k: 'gammaG', grp: 'fluid', kind: null, head: 'Gas gravity', unit: 'air = 1' },
+    { k: 'rsb', grp: 'fluid', kind: 'rs', head: 'R<sub>sb</sub>' },
+    { k: 'tempF', grp: 'fluid', kind: 'T', head: 'Temperature' },
+    { k: 'pb', grp: 'lab', kind: 'p', head: 'Measured P<sub>b</sub>' },
+    { k: 'muod', grp: 'lab', kind: 'mu', head: 'Dead-oil viscosity' },
+    { k: 'pRes', grp: 'sampling', kind: 'p', head: 'Reservoir pressure at sampling' },
+    { k: 'pwf', grp: 'sampling', kind: 'p', head: 'Flowing pressure at sampling', bhsOnly: true },
+    { k: 'gor', grp: 'sampling', kind: 'rs', head: 'Producing GOR at sampling' },
+    { k: 'depth', grp: 'sampling', kind: 'len', head: 'Sampling depth, TVD', bhsOnly: true }
+  ];
+  var SAMPLE_COLS = ['p', 'rs', 'bo', 'muo', 'z', 'mug'];
+  var STATUS_GLYPH = { pass: '✓', warn: '!', fail: '✕', na: '–' };
+  var STATUS_WORD = { pass: 'passes', warn: 'passes with warnings', fail: 'fails', na: 'not checked' };
+
+  /* The example field: three sound samples and three with textbook faults
+     (a typo in Bo, a bottomhole sample that lost gas, a recombination at the
+     wrong GOR). Bottomhole samples carry a sampling depth (ft TVD) on a
+     1.6 degF/100 ft geothermal gradient. Rows are [p, Rs, Bo, muo, z, mug]
+     in field units. */
+  var DEMO_SAMPLES = [{"id":"s1","name":"A-1 DST 2","type":"bhs","fluid":{"api":34.2,"gammaG":0.76,"rsb":640,"tempF":186},"sampling":{"pRes":4650,"pwf":3900,"gor":655,"depth":8550},"lab":{"pb":2853,"muod":2.957,"rows":[[4850,640,1.3019,0.781,null,null],[4050,640,1.3144,0.729,null,null],[3450,640,1.3264,0.696,null,null],[2850,640,1.3402,0.663,0.8519,0.0204],[2280,489,1.2683,0.78,0.8389,0.0183],[1710,348,1.2033,0.955,0.8521,0.0161],[1140,217,1.1438,1.234,0.8893,0.0146],[570,97,1.0927,1.754,0.942,0.0133],[200,30,1.0662,2.406,0.9764,0.0129]]}},{"id":"s2","name":"A-2 MDT","type":"bhs","fluid":{"api":35,"gammaG":0.78,"rsb":705,"tempF":182},"sampling":{"pRes":4600,"pwf":3950,"gor":690,"depth":8300},"lab":{"pb":2939,"muod":2.906,"rows":[[4930,705,1.3311,0.726,null,null],[4130,705,1.347,0.677,null,null],[3530,705,1.3612,0.637,null,null],[2930,703,1.3737,0.618,0.8439,0.0213],[2350,539,1.2931,0.719,0.8286,0.0187],[1760,383,1.2185,0.887,0.8391,0.0165],[1170,237,1.1529,1.158,0.8787,0.0145],[590,107,1.0966,1.682,0.9322,0.0133],[200,32,1.0661,2.33,0.9752,0.0126]]}},{"id":"s3","name":"B-1 DST 1","type":"sep","fluid":{"api":33.6,"gammaG":0.75,"rsb":585,"tempF":190},"sampling":{"pRes":4700,"gor":600},"lab":{"pb":2754,"muod":2.967,"rows":[[4740,585,1.2763,0.825,null,null],[3940,585,1.2865,0.765,null,null],[3340,585,1.2982,0.735,null,null],[2750,585,1.3128,0.702,null,null],[2200,447,1.2507,0.828,0.853,0.0179],[1650,321,1.1909,0.994,0.8611,0.0158],[1100,197,1.1354,1.293,0.8952,0.0145],[550,88,1.0924,1.814,0.947,0.0133],[200,29,1.0696,2.419,0.9789,0.0128]]}},{"id":"s4","name":"A-3 repeat study","type":"bhs","fluid":{"api":34.6,"gammaG":0.77,"rsb":668,"tempF":184},"sampling":{"pRes":4620,"pwf":4000,"gor":660,"depth":8420},"lab":{"pb":2874,"muod":2.92,"rows":[[4880,668,1.3123,0.767,null,null],[4080,668,1.3297,0.707,null,null],[3480,668,1.3391,0.665,null,null],[2880,668,1.3549,0.633,null,null],[2300,513,1.2789,0.756,0.8357,0.0182],[1730,363,1.2808,0.91,0.8494,0.0163],[1150,224,1.1481,1.205,0.8873,0.0146],[580,102,1.0942,1.702,0.938,0.0134],[200,31,1.0655,2.369,0.9803,0.0128]]}},{"id":"s5","name":"B-2 production test","type":"bhs","fluid":{"api":33.9,"gammaG":0.76,"rsb":560,"tempF":189},"sampling":{"pRes":4680,"pwf":2650,"gor":760,"depth":8740},"lab":{"pb":2075,"muod":2.939,"rows":[[4070,543,1.2716,0.815,null,null],[3270,543,1.2856,0.749,null,null],[2670,543,1.3023,0.72,null,null],[2070,418,1.2421,0.83,0.848,0.0173],[1660,320,1.1955,0.979,0.8626,0.016],[1240,226,1.1525,1.163,0.8847,0.0148],[830,142,1.1153,1.483,0.9152,0.0139],[410,63,1.0815,1.999,0.9542,0.0132],[170,24,1.0656,2.477,0.981,0.0127]]}},{"id":"s6","name":"C-1 recombined","type":"sep","fluid":{"api":34.8,"gammaG":0.77,"rsb":910,"tempF":185},"sampling":{"pRes":4640,"gor":700},"lab":{"pb":3704,"muod":2.814,"rows":[[5710,910,1.4353,0.612,null,null],[4910,910,1.4473,0.574,null,null],[4310,910,1.4642,0.549,null,null],[3710,904,1.4769,0.516,0.8841,0.0243],[2970,693,1.3703,0.621,0.847,0.0211],[2230,493,1.2718,0.75,0.8368,0.0183],[1490,306,1.1843,1,0.8604,0.0154],[740,134,1.1081,1.503,0.9242,0.0135],[200,31,1.0669,2.293,0.9751,0.0128]]}}];
+
+  var samples = { list: [], fieldTune: false };
+  var openSample = {}, pickedSample = null;
+  var sampleScreen = null, sampleScreenKey = null;
+  var pooledFit = null, pooledKey = null, pooledError = null;
+  var poolRank = null, poolRankKey = null, poolRanking = false;
+
+  function newSampleId() { return 's' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); }
+  function emptySampleRow() { return { p: null, rs: null, bo: null, muo: null, z: null, mug: null }; }
+
+  function cleanSample(o) {
+    o = o || {};
+    var f = o.fluid || {}, sm = o.sampling || {}, l = o.lab || {};
+    return {
+      id: o.id || newSampleId(), name: String(o.name || 'Sample'),
+      type: o.type === 'sep' ? 'sep' : 'bhs',
+      fluid: { api: finiteOrNull(f.api), gammaG: finiteOrNull(f.gammaG), rsb: finiteOrNull(f.rsb), tempF: finiteOrNull(f.tempF) },
+      sampling: { pRes: finiteOrNull(sm.pRes), pwf: finiteOrNull(sm.pwf), gor: finiteOrNull(sm.gor),
+                  depth: finiteOrNull(sm.depth) },
+      lab: { pb: finiteOrNull(l.pb), muod: finiteOrNull(l.muod),
+             rows: (l.rows || []).map(function (r) {
+               if (Array.isArray(r)) r = { p: r[0], rs: r[1], bo: r[2], muo: r[3], z: r[4], mug: r[5] };
+               var out = {};
+               SAMPLE_COLS.forEach(function (k) { out[k] = finiteOrNull(r[k]); });
+               return out;
+             }) },
+      include: o.include === true || o.include === false ? o.include : null
+    };
+  }
+
+  /* What the screening sees: complete rows only. */
+  function samplesForModel() {
+    return samples.list.map(function (s) {
+      var c = JSON.parse(JSON.stringify(s));
+      c.lab.rows = c.lab.rows.filter(function (r) { return r.p !== null; });
+      return c;
+    });
+  }
+
+  /* The case settings the samples share: the selected correlations. */
+  function sampleBase() {
+    var inp = readInputs();
+    return { corr: inp.corr, salinity: inp.salinity, pMax: inp.pMax };
+  }
+
+  function sampleField(s, f) { return s[f.grp][f.k]; }
+
+  /* ---------- editor ---------- */
+
+  function renderSampleList() {
+    var host = $('sampleList');
+    if (!host) return;
+    host.textContent = '';
+    if (!samples.list.length) {
+      var p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'No samples yet. Add one per PVT report, add the Lab data table, or load the example field to see the screening at work.';
+      host.appendChild(p);
+      return;
+    }
+    samples.list.forEach(function (s, i) { host.appendChild(sampleCard(s, i)); });
+    paintSampleStatus();
+  }
+
+  function sampleCard(s, i) {
+    var d = document.createElement('details');
+    d.className = 'sample-card';
+    d.dataset.id = s.id;
+    d.open = !!openSample[s.id];
+    d.addEventListener('toggle', function () { openSample[s.id] = d.open; });
+
+    var sum = document.createElement('summary');
+    var dot = document.createElement('span');
+    dot.className = 'qc-dot na'; dot.dataset.statusFor = s.id; dot.textContent = STATUS_GLYPH.na;
+    var nm = document.createElement('span');
+    nm.className = 'sample-name'; nm.textContent = s.name;
+    var meta = document.createElement('span');
+    meta.className = 'sample-meta';
+    meta.dataset.metaFor = s.id;
+    sum.appendChild(dot); sum.appendChild(nm); sum.appendChild(meta);
+    d.appendChild(sum);
+
+    var body = document.createElement('div');
+    body.className = 'sample-body';
+
+    var top = document.createElement('div');
+    top.className = 'sample-top';
+    var fName = document.createElement('div');
+    fName.className = 'field';
+    fName.innerHTML = '<label>Name</label>';
+    var inName = document.createElement('input');
+    inName.type = 'text'; inName.value = s.name;
+    inName.setAttribute('aria-label', 'Sample name');
+    inName.addEventListener('input', function () {
+      s.name = inName.value || 'Sample'; nm.textContent = s.name; samplesChanged();
+    });
+    fName.appendChild(inName);
+    var fType = document.createElement('div');
+    fType.className = 'field';
+    fType.innerHTML = '<label>Sample type</label>';
+    var selType = document.createElement('select');
+    [['bhs', 'Bottomhole'], ['sep', 'Separator recombination']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; selType.appendChild(op);
+    });
+    selType.value = s.type;
+    selType.setAttribute('aria-label', 'Sample type');
+    selType.addEventListener('change', function () {
+      s.type = selType.value;
+      body.querySelectorAll('.bhs-only').forEach(function (e) { e.hidden = s.type !== 'bhs'; });
+      samplesChanged();
+    });
+    fType.appendChild(selType);
+    top.appendChild(fName); top.appendChild(fType);
+    body.appendChild(top);
+
+    var grid = document.createElement('div');
+    grid.className = 'sample-scalars';
+    SAMPLE_FIELDS.forEach(function (f) {
+      var w = document.createElement('div');
+      w.className = 'field' + (f.bhsOnly ? ' bhs-only' : '');
+      if (f.bhsOnly) w.hidden = s.type !== 'bhs';
+      var lb = document.createElement('label');
+      lb.innerHTML = f.head + ' <span class="unit">' + (f.kind ? label(f.kind) : f.unit) + '</span>';
+      var inp = document.createElement('input');
+      inp.type = 'text'; inp.inputMode = 'decimal';
+      inp.value = labCellText(f, sampleField(s, f));
+      inp.placeholder = '—';
+      inp.addEventListener('input', function () {
+        s[f.grp][f.k] = labCellValue(f, inp.value);
+        samplesChanged();
+      });
+      lb.htmlFor = inp.id = 'smp-' + s.id + '-' + f.k;
+      w.appendChild(lb); w.appendChild(inp);
+      grid.appendChild(w);
+    });
+    body.appendChild(grid);
+
+    var wrap = document.createElement('div');
+    wrap.className = 'table-wrap lab-wrap';
+    var tbl = document.createElement('table');
+    tbl.className = 'lab-table';
+    wrap.appendChild(tbl);
+    body.appendChild(wrap);
+    renderSampleTable(tbl, s);
+
+    var bar = document.createElement('div');
+    bar.className = 'export-bar lab-actions';
+    var add = document.createElement('button');
+    add.type = 'button'; add.textContent = 'Add row';
+    add.addEventListener('click', function () { s.lab.rows.push(emptySampleRow()); renderSampleTable(tbl, s); });
+    var dup = document.createElement('button');
+    dup.type = 'button'; dup.className = 'ghost'; dup.textContent = 'Duplicate sample';
+    dup.addEventListener('click', function () {
+      var c = cleanSample(JSON.parse(JSON.stringify(s)));
+      c.id = newSampleId(); c.name = s.name + ' (copy)';
+      samples.list.splice(i + 1, 0, c);
+      openSample[c.id] = true;
+      renderSampleList(); samplesChanged();
+    });
+    var del = document.createElement('button');
+    del.type = 'button'; del.className = 'ghost danger'; del.textContent = 'Delete sample';
+    del.addEventListener('click', function () {
+      samples.list = samples.list.filter(function (x) { return x.id !== s.id; });
+      if (pickedSample === s.id) pickedSample = null;
+      renderSampleList(); samplesChanged();
+    });
+    bar.appendChild(add); bar.appendChild(dup); bar.appendChild(del);
+    body.appendChild(bar);
+    d.appendChild(body);
+    return d;
+  }
+
+  function renderSampleTable(tbl, s) {
+    var cols = LAB_COLS.oil;
+    while (s.lab.rows.length < 3) s.lab.rows.push(emptySampleRow());
+    tbl.textContent = '';
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    cols.forEach(function (c) {
+      var h = document.createElement('th');
+      h.textContent = c.head + (c.kind ? ' (' + label(c.kind) + ')' : '');
+      hr.appendChild(h);
+    });
+    hr.appendChild(document.createElement('th'));
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    s.lab.rows.forEach(function (r, i) {
+      var tr = document.createElement('tr');
+      cols.forEach(function (c, j) {
+        var td = document.createElement('td');
+        var inp = document.createElement('input');
+        inp.type = 'text'; inp.inputMode = 'decimal';
+        inp.value = labCellText(c, r[c.k]);
+        inp.setAttribute('aria-label', s.name + ', ' + c.head + ', row ' + (i + 1));
+        inp.addEventListener('input', function () { r[c.k] = labCellValue(c, inp.value); samplesChanged(); });
+        inp.addEventListener('paste', function (ev) {
+          var text = (ev.clipboardData || window.clipboardData).getData('text');
+          if (!/[\t\n;]/.test(text)) return;
+          ev.preventDefault();
+          pasteSampleBlock(s, i, j, text);
+          renderSampleTable(tbl, s);
+          samplesChanged();
+        });
+        td.appendChild(inp); tr.appendChild(td);
+      });
+      var tdD = document.createElement('td');
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'ghost lab-del'; b.textContent = '✕';
+      b.setAttribute('aria-label', 'Delete row ' + (i + 1));
+      b.addEventListener('click', function () { s.lab.rows.splice(i, 1); renderSampleTable(tbl, s); samplesChanged(); });
+      tdD.appendChild(b); tr.appendChild(tdD);
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+  }
+
+  /* Same rules as the Lab data table: header and unit rows are skipped. */
+  function pasteSampleBlock(s, r0, c0, text) {
+    var cols = LAB_COLS.oil;
+    var lines = text.replace(/\r/g, '').split('\n').filter(function (l) { return l.trim() !== ''; });
+    var r = r0;
+    lines.forEach(function (line) {
+      var cells = line.split('\t');
+      if (cells.length === 1) cells = line.split(/[;,]\s*/);
+      if (labCellValue(cols[c0] || cols[0], cells[0]) === null) return;
+      while (s.lab.rows.length <= r) s.lab.rows.push(emptySampleRow());
+      cells.forEach(function (cell, j) {
+        var col = cols[c0 + j];
+        if (col) s.lab.rows[r][col.k] = labCellValue(col, cell);
+      });
+      r++;
+    });
+  }
+
+  var sampleTimer = null;
+  function samplesChanged() {
+    persistSamples();
+    clearTimeout(sampleTimer);
+    sampleTimer = setTimeout(function () {
+      if (samples.fieldTune) recompute(); else renderSamples();
+    }, 250);
+  }
+
+  function persistSamples() {
+    try { localStorage.setItem('pvt.samples', JSON.stringify(samples)); } catch (e) { /* ignore */ }
+  }
+  function restoreSamples() {
+    try {
+      var o = JSON.parse(localStorage.getItem('pvt.samples'));
+      if (o && Array.isArray(o.list)) {
+        samples.list = o.list.map(cleanSample);
+        samples.fieldTune = !!o.fieldTune;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- screening and the pooled fit (cached) ---------- */
+
+  function screenKeyNow() { return JSON.stringify([samplesForModel(), sampleBase().corr]); }
+
+  function ensureSampleScreen() {
+    var key = screenKeyNow();
+    if (key === sampleScreenKey) return sampleScreen;
+    sampleScreenKey = key;
+    sampleScreen = samples.list.length ? Smp.screenSamples(sampleBase(), samplesForModel()) : null;
+    return sampleScreen;
+  }
+
+  function acceptedSamples() {
+    var scr = ensureSampleScreen();
+    if (!scr) return [];
+    var list = samplesForModel();
+    return list.filter(function (s, i) { return scr[i].included; });
+  }
+
+  function ensurePooledFit() {
+    var acc = acceptedSamples();
+    var key = JSON.stringify([acc, sampleBase().corr]);
+    if (key === pooledKey) return pooledFit;
+    pooledKey = key; pooledFit = null; pooledError = null;
+    if (!acc.length) return null;
+    try { pooledFit = Smp.regressPooled(sampleBase(), acc); }
+    catch (e) { pooledError = e.message; }
+    return pooledFit;
+  }
+
+  /* The model's tuning block: multipliers, the pooled fit for the deck
+     header, and where they came from. */
+  function pooledPayload(fit) {
+    var out = {}, k;
+    for (k in fit.tuning) out[k] = fit.tuning[k];
+    out.fit = fit.props.filter(function (p) { return p.n; }).map(function (p) {
+      return { label: p.label, n: p.n, before: p.before, after: p.after };
+    });
+    out.source = 'field-wide fit to ' + fit.perSample.length + ' screened PVT sample' +
+      (fit.perSample.length === 1 ? '' : 's') + ' (' + fit.perSample.map(function (s) { return s.name; }).join(', ') + ')';
+    return out;
+  }
+
+  /* ---------- rendering ---------- */
+
+  function renderSamples() {
+    if (!$('screenTable') || effectiveMode() !== 'several') return;
+    var scr = ensureSampleScreen();
+    paintSampleStatus();
+    renderScreenTable(scr);
+    renderScreenDetail(scr);
+    renderScreenCharts(scr);
+    renderPooled();
+    renderCaseSampleSelect();
+    $('fieldTuneOn').checked = samples.fieldTune;
+  }
+
+  function paintSampleStatus() {
+    var scr = sampleScreen;
+    samples.list.forEach(function (s, i) {
+      var dot = document.querySelector('[data-status-for="' + s.id + '"]');
+      var meta = document.querySelector('[data-meta-for="' + s.id + '"]');
+      var r = scr && scr[i] && scr[i].id === s.id ? scr[i] : null;
+      if (dot) { dot.className = 'qc-dot ' + (r ? r.status : 'na'); dot.textContent = STATUS_GLYPH[r ? r.status : 'na']; }
+      if (meta) {
+        var n = s.lab.rows.filter(function (x) { return x.p !== null; }).length;
+        meta.textContent = (s.type === 'sep' ? 'Recombined' : 'Bottomhole') + ', ' + n + ' row' + (n === 1 ? '' : 's') +
+          (r ? ' — ' + (r.included ? 'used in the fit' : 'left out') : '');
+      }
+    });
+  }
+
+  function renderScreenTable(scr) {
+    var tbl = $('screenTable'), sumHost = $('screenSummary');
+    tbl.textContent = ''; sumHost.textContent = '';
+    if (!scr) return;
+    var nIn = scr.filter(function (r) { return r.included; }).length;
+    var nFail = scr.filter(function (r) { return r.status === 'fail'; }).length;
+    sumHost.appendChild(notice(nIn ? (nFail ? 'warn' : 'ok') : 'error', nIn ? (nFail ? '!' : '✓') : '✕',
+      nIn + ' of ' + scr.length + ' sample' + (scr.length === 1 ? '' : 's') + ' used in the fit' +
+      (nFail ? '; ' + nFail + ' fail' + (nFail === 1 ? 's' : '') + ' the screening' : '') + '.' +
+      (scr.length < 3 ? ' The checks against the other samples need three or more.' : '')));
+
+    var checks = Smp.CHECKS;
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    ['Use', 'Sample', 'Pb meas.', 'Pb corr.'].concat(checks.map(function (c) { return c.short; })).forEach(function (h, k) {
+      var e = document.createElement('th');
+      e.textContent = h;
+      if (k === 2 || k === 3) e.textContent += ' (' + label('p') + ')';
+      if (k >= 4) e.title = checks[k - 4].label;
+      hr.appendChild(e);
+    });
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    scr.forEach(function (r, i) {
+      var s = samples.list[i];
+      var tr = document.createElement('tr');
+      if (r.id === pickedSample) tr.className = 'is-selected';
+      if (!r.included) tr.classList.add('is-out');
+      var tdU = document.createElement('td');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = r.included;
+      cb.setAttribute('aria-label', 'Use ' + r.name + ' in the fit');
+      cb.addEventListener('change', function () {
+        s.include = cb.checked === r.auto ? null : cb.checked;
+        samplesChanged();
+      });
+      tdU.appendChild(cb);
+      if (r.overridden) {
+        var ov = document.createElement('button');
+        ov.type = 'button'; ov.className = 'ghost override';
+        ov.textContent = 'your call';
+        ov.title = 'Overrides the screening - select to follow the screening again';
+        ov.addEventListener('click', function () { s.include = null; samplesChanged(); });
+        tdU.appendChild(ov);
+      }
+      tr.appendChild(tdU);
+      var tdN = document.createElement('td');
+      var nb = document.createElement('button');
+      nb.type = 'button'; nb.className = 'link'; nb.textContent = r.name;
+      nb.addEventListener('click', function () { pickedSample = r.id; renderSamples(); });
+      tdN.appendChild(nb); tr.appendChild(tdN);
+      [r.pbMeas, r.pbCalc].forEach(function (v) {
+        var td = document.createElement('td'); td.textContent = v ? fmt('p', v) : '–'; tr.appendChild(td);
+      });
+      checks.forEach(function (c) {
+        var q = r.checks.filter(function (x) { return x.key === c.key; })[0];
+        var st = q ? q.status : 'na';
+        var td = document.createElement('td');
+        var sp = document.createElement('span');
+        sp.className = 'qc-dot ' + st; sp.textContent = STATUS_GLYPH[st];
+        sp.title = c.label + ': ' + (q ? q.detail : 'not checked');
+        td.appendChild(sp); tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+  }
+
+  function renderScreenDetail(scr) {
+    var host = $('screenDetail');
+    host.textContent = '';
+    if (!scr) return;
+    var r = scr.filter(function (x) { return x.id === pickedSample; })[0];
+    if (!r) {
+      /* nothing picked: open on the first sample that needs attention */
+      r = scr.filter(function (x) { return x.status === 'fail'; })[0] || scr.filter(function (x) { return x.status === 'warn'; })[0];
+      if (!r) return;
+    }
+    var h = document.createElement('h3');
+    h.className = 'screen-detail-head';
+    h.textContent = r.name + ' ' + STATUS_WORD[r.status] + (r.included ? ' — used in the fit' : ' — left out of the fit');
+    host.appendChild(h);
+    renderCheckList(host, r.checks);
+  }
+
+  /* Problems in full, passes and unchecked items as a compact list. */
+  function renderCheckList(host, checks) {
+    checks.filter(function (c) { return c.status === 'fail' || c.status === 'warn'; })
+      .sort(function (a, b) { return (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1); })
+      .forEach(function (c) {
+        var n = notice(c.status === 'fail' ? 'error' : 'warn', STATUS_GLYPH[c.status], '');
+        var b = document.createElement('strong'); b.textContent = c.label + '. ';
+        n.lastChild.appendChild(b); n.lastChild.appendChild(document.createTextNode(c.detail));
+        host.appendChild(n);
+      });
+    var rest = checks.filter(function (c) { return c.status === 'pass' || c.status === 'na'; });
+    if (!rest.length) return;
+    var ul = document.createElement('ul');
+    ul.className = 'check-list';
+    rest.forEach(function (c) {
+      var li = document.createElement('li');
+      var dot = document.createElement('span');
+      dot.className = 'qc-dot ' + c.status; dot.textContent = STATUS_GLYPH[c.status];
+      var b = document.createElement('strong'); b.textContent = c.label + '. ';
+      li.appendChild(dot); li.appendChild(b); li.appendChild(document.createTextNode(c.detail));
+      ul.appendChild(li);
+    });
+    host.appendChild(ul);
+  }
+
+  /* Measured against correlated Pb: the field trend is the accepted
+     samples' median bias; a sample off the trend stands out at a glance. */
+  function renderScreenCharts(scr) {
+    var host = $('screenCharts');
+    host.textContent = '';
+    if (!scr) return;
+    var pts = scr.filter(function (r) { return r.pbMeas && r.pbCalc; });
+    if (!pts.length) return;
+    var acc = pts.filter(function (r) { return r.included; }), out = pts.filter(function (r) { return !r.included; });
+    var lo = Infinity, hi = 0;
+    pts.forEach(function (r) { lo = Math.min(lo, r.pbCalc, r.pbMeas); hi = Math.max(hi, r.pbCalc, r.pbMeas); });
+    lo *= 0.85; hi *= 1.1;
+    var line = function (k) { return [{ x: conv('p', lo), y: conv('p', lo * k) }, { x: conv('p', hi), y: conv('p', hi * k) }]; };
+    var series = [{ name: 'Measured = correlation', slot: 7, dashed: true, points: line(1) }];
+    if (acc.length) {
+      var logs = acc.map(function (r) { return Math.log(r.pbMeas / r.pbCalc); }).sort(function (a, b) { return a - b; });
+      var med = logs.length % 2 ? logs[(logs.length - 1) / 2] : 0.5 * (logs[logs.length / 2 - 1] + logs[logs.length / 2]);
+      series.push({ name: 'Field trend (' + (med >= 0 ? '+' : '') + (100 * (Math.exp(med) - 1)).toFixed(1) + ' %)', slot: 1, points: line(Math.exp(med)) });
+    }
+    var dots = function (list) { return list.map(function (r) { return { x: conv('p', r.pbCalc), y: conv('p', r.pbMeas) }; }); };
+    if (acc.length) series.push({ name: 'Used in the fit', slot: 1, scatter: true, points: dots(acc) });
+    if (out.length) series.push({ name: 'Left out', slot: 5, scatter: true, points: dots(out) });
+    chartInto(host, 'smp_pb', {
+      title: 'Measured against correlated bubble point',
+      subtitle: 'Correlation: ' + (CORR_NAMES[sampleBase().corr.pb] || sampleBase().corr.pb) + ', untuned, at each sample\'s Rsb',
+      xLabel: 'Pb from the correlation (' + label('p') + ')', yLabel: 'Measured Pb (' + label('p') + ')', xUnit: label('p'),
+      series: series, endLabels: false,
+      fmtX: function (v) { return v.toFixed(uu('p').d); }, fmtY: function (v) { return v.toFixed(uu('p').d); }
+    });
+  }
+
+  function renderPooled() {
+    var fit = ensurePooledFit();
+    var notes = $('poolNotes'), tbl = $('poolTable'), tbl2 = $('poolSampleTable'), charts2 = $('poolCharts');
+    notes.textContent = ''; tbl.textContent = ''; tbl2.textContent = ''; charts2.textContent = '';
+    var acc = acceptedSamples();
+    $('btnPoolRank').disabled = !acc.length || poolRanking;
+    renderPoolRank();
+    if (pooledError) notes.appendChild(notice('error', '✕', 'The field-wide regression failed: ' + pooledError));
+    if (!fit) {
+      if (samples.list.length) notes.appendChild(notice('info', 'i', 'No sample passes the screening yet - correct the failing checks or tick Use to include a sample on your own judgement.'));
+      return;
+    }
+    fit.notes.forEach(function (n) { notes.appendChild(notice('warn', '!', n)); });
+
+    /* pooled fit per property */
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    ['Property', 'Samples', 'Points', 'Untuned AARE', 'Tuned AARE', 'Max error, tuned'].forEach(function (h) {
+      var e = document.createElement('th'); e.textContent = h; hr.appendChild(e);
+    });
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    fit.props.filter(function (p) { return p.n; }).forEach(function (p) {
+      var tr = document.createElement('tr');
+      [p.label, String(p.samples), String(p.n), fmtPct(p.before), fmtPct(p.after), fmtPct(p.maxAfter)].forEach(function (t) {
+        var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    var sep = document.createElement('tr');
+    sep.className = 'section-row';
+    var st = document.createElement('td'); st.colSpan = 6; st.textContent = 'Field-wide multipliers';
+    sep.appendChild(st); tb.appendChild(sep);
+    fit.params.forEach(function (q) {
+      var tr = document.createElement('tr');
+      if (q.atBound) tr.className = 'at-bound';
+      [q.label, '', String(q.points), '', '× ' + q.value.toFixed(4), q.atBound ? 'at search limit' : ''].forEach(function (t) {
+        var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+
+    /* tuned AARE per sample: one sample far worse than the rest is pulling
+       against the others */
+    var props = fit.props.filter(function (p) { return p.n; });
+    var th2 = document.createElement('thead'), hr2 = document.createElement('tr');
+    ['Tuned AARE by sample'].concat(props.map(function (p) { return p.label; })).forEach(function (h) {
+      var e = document.createElement('th'); e.textContent = h; hr2.appendChild(e);
+    });
+    th2.appendChild(hr2); tbl2.appendChild(th2);
+    var tb2 = document.createElement('tbody');
+    fit.perSample.forEach(function (s) {
+      var tr = document.createElement('tr');
+      var td0 = document.createElement('td'); td0.textContent = s.name; tr.appendChild(td0);
+      props.forEach(function (p) {
+        var c = s.props[p.key], td = document.createElement('td');
+        td.textContent = c && c.n ? fmtPct(c.after) : '–';
+        if (c && c.n && p.after !== null && c.after > Math.max(3 * p.after, 2)) td.className = 'cell-flag';
+        tr.appendChild(td);
+      });
+      tb2.appendChild(tr);
+    });
+    tbl2.appendChild(tb2);
+
+    renderPoolCharts(fit);
+  }
+
+  /* Each accepted sample in its own colour: laboratory points and the
+     field-tuned correlation evaluated with that sample's fluid. */
+  function renderPoolCharts(fit) {
+    var host = $('poolCharts');
+    var defs = [
+      { col: 'rs', title: 'Solution GOR', kind: 'rs' },
+      { col: 'bo', title: 'Oil formation volume factor', kind: 'bo' },
+      { col: 'muo', title: 'Oil viscosity', kind: 'mu' }
+    ];
+    defs.forEach(function (d) {
+      var series = [];
+      fit.items.forEach(function (it, k) {
+        var slot = (k % 7) + 1;
+        var pts = it.data.rows.filter(function (r) { return r[d.col] !== null; });
+        if (!pts.length) return;
+        var hi = pts.reduce(function (a, r) { return Math.max(a, r.p); }, 0) * 1.02;
+        var m;
+        try { m = Model.build(Object.assign({}, it.input, { tuning: fit.tuning, pointsOnly: true })); } catch (e) { return; }
+        var grid = [];
+        for (var i = 0; i <= 40; i++) grid.push(14.7 + (hi - 14.7) * i / 40);
+        if (m.pb < hi) grid.push(m.pb);
+        grid.sort(function (a, b) { return a - b; });
+        series.push({ name: it.name, slot: slot, points: grid.map(function (p) {
+          return { x: conv('p', p), y: kindConv(d.kind, m.at(p, 'oil')[d.col]) };
+        }) });
+        series.push({ name: it.name + ' (lab)', slot: slot, scatter: true, legend: false, points: pts.map(function (r) {
+          return { x: conv('p', r.p), y: kindConv(d.kind, r[d.col]) };
+        }) });
+      });
+      if (!series.length) return;
+      chartInto(host, 'pool_' + d.col, {
+        title: d.title, subtitle: 'Accepted samples against the field-tuned correlation, each at its own Rsb and temperature',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: kindLabel(d.kind), xUnit: label('p'),
+        series: series, endLabels: false,
+        fmtX: function (v) { return v.toFixed(uu('p').d); },
+        fmtY: function (v) { var k = kindDigits(d.kind); return k < 0 ? v.toExponential(3) : v.toFixed(k); }
+      });
+    });
+  }
+
+  /* ---------- pooled ranking ---------- */
+
+  function runPoolRank() {
+    if (poolRanking) return;
+    var base = sampleBase(), acc = acceptedSamples();
+    if (!acc.length) return;
+    var fams = Tune.FAMILIES.oil, out = [], k = 0;
+    var key = JSON.stringify([acc, readInputs().salinity]);
+    poolRanking = true;
+    $('btnPoolRank').disabled = true;
+    var step = function () {
+      if (k >= fams.length) {
+        poolRank = out; poolRankKey = key; poolRanking = false;
+        $('poolStatus').textContent = '';
+        renderSamples();
+        return;
+      }
+      $('poolStatus').textContent = 'Ranking ' + fams[k].label.toLowerCase() + ' (' + (k + 1) + ' of ' + fams.length + ')…';
+      try {
+        var r = Smp.rankFamilyPooled(base, acc, fams[k]);
+        if (r) out.push(r);
+      } catch (e) { /* a family that cannot be ranked is left out */ }
+      k++;
+      setTimeout(step, 0);
+    };
+    setTimeout(step, 0);
+  }
+
+  function renderPoolRank() {
+    var host = $('poolRank'), btn = $('btnPoolBest');
+    host.textContent = '';
+    btn.hidden = true;
+    if (!poolRank) return;
+    var fresh = poolRankKey === JSON.stringify([acceptedSamples(), readInputs().salinity]);
+    if (!fresh) {
+      host.appendChild(notice('info', 'i', 'The accepted samples have changed since this ranking - rank again before using it.'));
+    }
+    var inp = readInputs(), changes = 0;
+    var list = document.createElement('div');
+    list.className = 'pool-rank';
+    poolRank.forEach(function (fam) {
+      var sel = inp.corr[fam.corr];
+      if (fam.best && fam.best !== sel) changes++;
+      var row = document.createElement('div');
+      row.className = 'pool-rank-row';
+      var head = document.createElement('div');
+      head.className = 'pool-rank-fam';
+      head.textContent = fam.label;
+      var chips = document.createElement('div');
+      chips.className = 'pool-rank-chips';
+      fam.rows.filter(function (r) { return r.aareTuned !== null; })
+        .sort(function (x, y) { return x.aareTuned - y.aareTuned; }).forEach(function (r) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.className = 'chip' + (r.corr === sel ? ' on' : '');
+          b.setAttribute('aria-pressed', String(r.corr === sel));
+          b.textContent = (CORR_NAMES[r.corr] || r.corr) + ' ' + r.aareTuned.toFixed(2) + ' %';
+          if (r.corr === fam.best) {
+            var bb = document.createElement('span'); bb.className = 'best-badge'; bb.textContent = 'best fit';
+            b.appendChild(bb);
+          }
+          b.title = 'Tuned AARE ' + r.aareTuned.toFixed(2) + ' % (untuned ' + fmtPct(r.aareRaw) + '), multiplier × ' +
+            (r.mult ? r.mult.toFixed(3) : '–') + '. Select to use ' + (CORR_NAMES[r.corr] || r.corr) + '.';
+          b.addEventListener('click', function () { chooseCorrelation(fam.corr, r.corr); });
+          chips.appendChild(b);
+        });
+      row.appendChild(head); row.appendChild(chips);
+      list.appendChild(row);
+    });
+    host.appendChild(list);
+    btn.hidden = !fresh;
+    btn.disabled = !changes;
+    btn.textContent = changes ? 'Use the best-fitting correlations (' + changes + ' change' + (changes === 1 ? '' : 's') + ')'
+      : 'The best-fitting correlations are selected';
+  }
+
+  function usePoolBest() {
+    if (!poolRank) return;
+    poolRank.forEach(function (fam) {
+      if (fam.best && CORR_SELECT[fam.corr]) $(CORR_SELECT[fam.corr]).value = fam.best;
+    });
+    $('preset').value = '';
+    recompute();
+  }
+
+  /* ---------- apply ---------- */
+
+  function renderCaseSampleSelect() {
+    var sel = $('caseSample'), cur = sel.value;
+    sel.textContent = '';
+    samples.list.forEach(function (s) {
+      var op = document.createElement('option'); op.value = s.id; op.textContent = s.name; sel.appendChild(op);
+    });
+    if (samples.list.some(function (s) { return s.id === cur; })) sel.value = cur;
+    $('btnLoadSample').disabled = !samples.list.length;
+  }
+
+  function loadSampleIntoCase() {
+    var s = samples.list.filter(function (x) { return x.id === $('caseSample').value; })[0];
+    if (!s) return;
+    var f = s.fluid;
+    writeInputs({ api: f.api, gammaG: f.gammaG, rsb: f.rsb, tempF: f.tempF });
+    $('spec').value = 'rsb';
+    $('preset').value = '';
+    /* its data become the one-report table, so switching to One PVT report
+       carries on with this sample */
+    var keep = lab.oil.tune;
+    lab.oil = cleanLab({ pb: s.lab.pb, muod: s.lab.muod, rows: s.lab.rows.filter(function (r) { return r.p !== null; }),
+      sampling: { type: s.type, pRes: s.sampling.pRes, pwf: s.sampling.pwf, gor: s.sampling.gor } });
+    lab.oil.tune = keep;
+    setInput('labPb', lab.oil.pb); setInput('labMuod', lab.oil.muod);
+    writeLabSampling();
+    renderLabTable();
+    applyFluidVisibility();
+    recompute();
+    say('info', s.name + ' is now the case: its fluid description is in the case inputs and its laboratory data in the one-report table.');
+  }
+
+  /* Switching from one report to several: the one report becomes the
+     first sample, so nothing entered is lost. */
+  function seedSamplesFromLab() {
+    if (samples.list.length || !Tune.hasData(lab.oil, 'oil') || !baseModel || baseModel.fluid !== 'oil') return false;
+    var inp = baseModel.input, L = lab.oil;
+    var s = cleanSample({
+      name: 'Case report', type: L.sampling ? L.sampling.type : 'bhs',
+      fluid: { api: inp.api, gammaG: inp.gammaG, rsb: baseModel.rsb, tempF: inp.tempF },
+      sampling: L.sampling || {},
+      lab: { pb: L.pb, muod: L.muod, rows: L.rows.filter(function (r) { return r.p !== null; }) }
+    });
+    samples.list.push(s);
+    samples.fieldTune = !!L.tune;
+    openSample[s.id] = true;
+    persistSamples();
+    renderSampleList();
+    return true;
+  }
+
+  /* ================================================================ *
+   * Laboratory data mode: none, one report, several reports
+   * ================================================================ */
+
+  var labMode = 'none';
+  var LAB_TAB = { one: 'Lab data & tuning', several: 'PVT samples & tuning' };
+  var LAB_HINT = {
+    none: 'Tables come from the published correlations.',
+    one: 'Enter, check and tune to one PVT study on the Lab data & tuning tab.',
+    several: 'Screen several PVT studies and tune field-wide on the PVT samples & tuning tab.'
+  };
+
+  /* Several reports is an oil-reservoir workflow; a gas reservoir tunes to one. */
+  function effectiveMode() { return labMode === 'several' && fluid === 'gas' ? 'one' : labMode; }
+
+  function applyLabMode() {
+    var m = effectiveMode(), tab = $('tab-lab');
+    $('labMode').value = labMode;
+    $('labModeHint').textContent = LAB_HINT[labMode] +
+      (labMode === 'several' && fluid === 'gas' ? ' Gas reservoirs use one report.' : '');
+    tab.hidden = m === 'none';
+    if (m !== 'none') tab.textContent = LAB_TAB[m];
+    if (m === 'none' && tab.getAttribute('aria-selected') === 'true') $('tab-summary').click();
+    document.querySelectorAll('#panel-lab .mode-one').forEach(function (e) { e.hidden = m !== 'one'; });
+    document.querySelectorAll('#panel-lab .mode-several').forEach(function (e) { e.hidden = m !== 'several'; });
+    var note = $('labModeNote');
+    note.textContent = '';
+    if (labMode === 'several' && fluid === 'gas') {
+      note.appendChild(notice('info', 'i', 'Screening several reports covers oil reservoirs. For a gas reservoir, enter one report here; your oil samples are kept for when you switch back.'));
+    }
+  }
+
+  function setLabMode(next) {
+    if (['none', 'one', 'several'].indexOf(next) < 0) return;
+    var prev = labMode;
+    labMode = next;
+    try { localStorage.setItem('pvt.labMode', next); } catch (e) { /* ignore */ }
+    var seeded = prev === 'one' && next === 'several' && fluid === 'oil' && seedSamplesFromLab();
+    applyLabMode();
+    recompute();
+    if (seeded) say('info', 'Your one-report data is now the first sample, "Case report". Add the other reports beside it.');
+  }
+
+  /* First visit: ask how laboratory data will be used. Closing the question
+     without an answer keeps whatever the stored data implies. */
+  function initLabMode(fromLink) {
+    var stored = null;
+    try { stored = localStorage.getItem('pvt.labMode'); } catch (e) { /* ignore */ }
+    var inferred = samples.list.length ? 'several' : Tune.hasData(lab.oil, 'oil') || Tune.hasData(lab.gas, 'gas') ? 'one' : 'none';
+    if (fromLink) labMode = fromLink;
+    else labMode = stored || inferred;
+    $('labMode').addEventListener('change', function (ev) { setLabMode(ev.target.value); });
+    var dlg = $('labModeDialog');
+    dlg.querySelectorAll('[data-mode]').forEach(function (b) {
+      b.addEventListener('click', function () { dlg.close(); setLabMode(b.dataset.mode); });
+    });
+    dlg.addEventListener('cancel', function () {
+      try { localStorage.setItem('pvt.labMode', labMode); } catch (e) { /* ignore */ }
+    });
+    applyLabMode();
+    if (!stored && !fromLink && typeof dlg.showModal === 'function') {
+      var pre = dlg.querySelector('[data-mode="' + inferred + '"]');
+      dlg.showModal();
+      if (pre) pre.focus();
+    }
+  }
+
+  function initSamples() {
+    restoreSamples();
+    renderSampleList();
+    $('btnSampleAdd').addEventListener('click', function () {
+      var s = cleanSample({ name: 'Sample ' + (samples.list.length + 1) });
+      samples.list.push(s);
+      openSample[s.id] = true;
+      renderSampleList(); samplesChanged();
+    });
+    $('btnSampleDemo').addEventListener('click', function () {
+      samples.list = DEMO_SAMPLES.map(cleanSample);
+      openSample = {}; pickedSample = null; poolRank = null;
+      renderSampleList(); samplesChanged();
+    });
+    $('btnSampleClear').addEventListener('click', function () {
+      samples.list = []; samples.fieldTune = false; pickedSample = null; poolRank = null;
+      renderSampleList(); samplesChanged();
+      recompute();
+    });
+    $('btnPoolRank').addEventListener('click', runPoolRank);
+    $('btnPoolBest').addEventListener('click', usePoolBest);
+    $('fieldTuneOn').addEventListener('change', function (ev) {
+      samples.fieldTune = ev.target.checked;
+      persistSamples();
+      recompute();
+    });
+    $('btnLoadSample').addEventListener('click', loadSampleIntoCase);
   }
 
   /* ---------------- persistence + sharing ---------------- */
@@ -1525,11 +2510,18 @@
       localStorage.setItem('pvt.lab', JSON.stringify(lab));
     } catch (e) { /* private mode or blocked storage - the page still works */ }
   }
+  var linkLabMode = null;
   function restore() {
     var loaded = null;
     if (location.hash.length > 1) {
       try { loaded = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(1))))); }
       catch (e) { loaded = null; }
+      /* a shared case says how its laboratory data is used; older links
+         with laboratory data mean one report */
+      if (loaded) {
+        linkLabMode = ['none', 'one', 'several'].indexOf(loaded.labMode) >= 0 ? loaded.labMode
+          : loaded.lab && Tune.hasData(loaded.lab, loaded.fluid === 'gas' ? 'gas' : 'oil') ? 'one' : null;
+      }
     }
     if (!loaded) {
       try { loaded = JSON.parse(localStorage.getItem('pvt.inputs')); } catch (e) { loaded = null; }
@@ -1662,6 +2654,7 @@
       applyPreset(DEFAULT_PRESET[next]);
     }
     applyFluidVisibility();
+    applyLabMode();
     recompute();
   }
 
@@ -1678,6 +2671,7 @@
     $('unitField').setAttribute('aria-pressed', String(units === 'field'));
     $('unitMetric').setAttribute('aria-pressed', String(units === 'metric'));
     renderLabTable();
+    renderSampleList();
     recompute();
   }
 
@@ -1709,7 +2703,9 @@
     applyFluidVisibility();
     initTabs();
 
+    $('inputs').addEventListener('submit', function (ev) { ev.preventDefault(); });
     $('inputs').addEventListener('input', function (ev) {
+      if (ev.target.id === 'projectName' || ev.target.id === 'projectFile') return;
       if (ev.target.id === 'preset') return;
       if (['api', 'gammaG', 'tempF', 'rsb', 'pbMeas', 'yCO2', 'yH2S', 'yN2',
            'cgr', 'apiC'].indexOf(ev.target.id) >= 0) {
@@ -1718,6 +2714,7 @@
       schedule();
     });
     $('inputs').addEventListener('change', function (ev) {
+      if (ev.target.id === 'projectName' || ev.target.id === 'projectFile') return;
       if (ev.target.id === 'spec') applyFluidVisibility();
       if (ev.target.id === 'gasKind') {
         $('preset').value = '';
@@ -1735,6 +2732,9 @@
     });
     $('btnPlay').addEventListener('click', togglePlay);
     initLab();
+    initSamples();
+    initLabMode(linkLabMode);
+    initProject();
     $('tableSel').addEventListener('change', renderTable);
     $('fmtSel').addEventListener('change', renderExport);
     $('fmtUnits').addEventListener('change', renderExport);
@@ -1765,6 +2765,9 @@
         localStorage.removeItem('pvt.inputs.oil');
         localStorage.removeItem('pvt.inputs.gas');
         localStorage.removeItem('pvt.lab');
+        localStorage.removeItem('pvt.samples');
+        localStorage.removeItem('pvt.labMode');
+        localStorage.removeItem('pvt.projectName');
       } catch (e) { /* ignore */ }
       location.reload();
     });
