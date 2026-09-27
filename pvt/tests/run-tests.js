@@ -14,6 +14,8 @@ var M = require('../js/pvt-model.js');
 var E = require('../js/export.js');
 var FS = require('../js/fluid-state.js');
 var TU = require('../js/tuning.js');
+var SM = require('../js/samples.js');
+var PJ = require('../js/project.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -679,6 +681,122 @@ section('21. Laboratory data: tuning and correlation ranking');
      pr.length === 2 && pr[0].p === 3000 && pr[1].rs === null && pr[1].bo === 1.25, JSON.stringify(pr));
   ok('1-D minimiser finds a bracketed minimum',
      Math.abs(TU.minimize1D(function (m) { return Math.abs(Math.log(m / 1.37)); }, 0.5, 2).value - 1.37) < 1e-3);
+})();
+
+section('22. Several PVT reports: screening and the field-wide fit');
+(function () {
+  /* a synthetic field: the truth is the default correlations with these
+     multipliers; lab values carry 0.2 - 1 % deterministic scatter */
+  var truth = { pbMult: 1.07, boMult: 0.94, coMult: 1.25, muodMult: 1.35, muobMult: 1, muouMult: 0.8 };
+  var seed = 11;
+  function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+  function jit(v, s) { return v * (1 + (rnd() * 2 - 1) * s); }
+  function r(v, d) { return Number(v.toFixed(d)); }
+  function mk(id, type, f, sampling) {
+    var m = M.build({ api: f.api, gammaG: f.gammaG, rsb: f.rsb, tempF: f.tempF, tuning: truth, pointsOnly: true });
+    var ps = [m.pb + 2000, m.pb + 1000, m.pb, m.pb * 0.75, m.pb * 0.5, m.pb * 0.25, 200];
+    var rows = ps.map(function (p) {
+      p = Math.round(p); var q = m.at(p);
+      return { p: p, rs: p >= m.pb ? f.rsb : r(jit(q.rs, 0.005), 0), bo: r(jit(q.bo, 0.001), 4), muo: r(jit(q.muo, 0.008), 3),
+               z: p <= m.pb ? r(q.z, 4) : null, mug: p <= m.pb ? r(q.mug, 4) : null };
+    });
+    return { id: id, name: id, type: type, fluid: f, sampling: sampling,
+             lab: { pb: r(jit(m.pb, 0.003), 0), muod: r(jit(m.muod, 0.005), 3), rows: rows } };
+  }
+  var base = { corr: JSON.parse(JSON.stringify(M.DEFAULTS.corr)) };
+  var good = [
+    mk('A1', 'bhs', { api: 34.2, gammaG: 0.76, rsb: 640, tempF: 186 }, { pRes: 4650, pwf: 3900, gor: 650, depth: 8550 }),
+    mk('A2', 'bhs', { api: 35.0, gammaG: 0.78, rsb: 705, tempF: 182 }, { pRes: 4600, pwf: 3950, gor: 700, depth: 8300 }),
+    mk('A3', 'bhs', { api: 34.6, gammaG: 0.77, rsb: 668, tempF: 184 }, { pRes: 4620, pwf: 4000, gor: 670, depth: 8420 }),
+    mk('B1', 'sep', { api: 33.6, gammaG: 0.75, rsb: 585, tempF: 190 }, { pRes: 4700, gor: 590 })
+  ];
+  var typo = mk('T', 'bhs', { api: 34.4, gammaG: 0.77, rsb: 655, tempF: 185 }, { pRes: 4630, pwf: 3980, gor: 660, depth: 8480 });
+  typo.lab.rows[4].bo = r(typo.lab.rows[4].bo + 0.07, 4);
+  /* a bottomhole sample that lost gas: Pb well below its neighbours', and
+     sampled below that Pb... */
+  var lost = mk('L', 'bhs', { api: 33.9, gammaG: 0.76, rsb: 560, tempF: 189 }, { pRes: 4680, pwf: 2650, gor: 760, depth: 8740 });
+  lost.lab.pb = r(lost.lab.pb * 0.8, 0);
+  lost.sampling.pwf = r(lost.lab.pb * 0.95, 0);
+  var recomb = mk('R', 'sep', { api: 34.8, gammaG: 0.77, rsb: 910, tempF: 185 }, { pRes: 4640, gor: 700 });
+
+  var set = good.concat([typo, lost, recomb]);
+  var scr = SM.screenSamples(base, set);
+  var by = {}; scr.forEach(function (x) { by[x.id] = x; });
+  var st = function (id, key) { return by[id].checks.filter(function (c) { return c.key === key; })[0].status; };
+  ok('sound samples pass and are used', ['A1', 'A2', 'A3', 'B1'].every(function (id) {
+    return by[id].status !== 'fail' && by[id].included;
+  }), JSON.stringify(scr.map(function (x) { return [x.id, x.status]; })));
+  ok('a Bo typo fails as a point out of line, and names the right point',
+     st('T', 'points') === 'fail' && /at 2\d{3} psia|at 1\d{3} psia/.test(by.T.checks.filter(function (c) { return c.key === 'points'; })[0].detail) &&
+     new RegExp(String(typo.lab.rows[4].bo)).test(by.T.checks.filter(function (c) { return c.key === 'points'; })[0].detail));
+  ok('a two-phase bottomhole sample fails the sampling check', st('L', 'sampling') === 'fail');
+  ok('its Pb stands out against the other samples', st('L', 'fieldPb') === 'fail');
+  ok('and off the depth trend of the other bottomhole samples', st('L', 'fieldDepth') === 'fail');
+  ok('a recombination at the wrong GOR fails the sampling check', st('R', 'sampling') === 'fail');
+  ok('failed samples are left out by default', !by.T.included && !by.L.included && !by.R.included);
+  ok('sound bottomhole samples sit on the depth trend', ['A1', 'A2', 'A3'].every(function (id) { return st(id, 'fieldDepth') === 'pass'; }));
+  ok('separator samples are not tested against depth', st('B1', 'fieldDepth') === 'na');
+
+  /* the engineer's override */
+  var ov = set.map(function (x) { var c = JSON.parse(JSON.stringify(x)); if (c.id === 'T') c.include = true; if (c.id === 'A1') c.include = false; return c; });
+  var scr2 = SM.screenSamples(base, ov);
+  ok('Use overrides the screening both ways', scr2[4].included && scr2[4].overridden && !scr2[0].included && scr2[0].overridden);
+
+  /* temperature falling with depth is flagged */
+  var inv = good.map(function (x) { return JSON.parse(JSON.stringify(x)); });
+  inv[0].sampling.depth = 8200; inv[1].sampling.depth = 8700;
+  var scr3 = SM.screenSamples(base, inv);
+  ok('a temperature that falls with depth is questioned',
+     scr3.slice(0, 3).some(function (x) { return x.checks.filter(function (c) { return c.key === 'fieldDepth'; })[0].status !== 'pass'; }));
+
+  /* field-wide fit on the accepted samples */
+  var acc = set.filter(function (x) { return by[x.id].included; });
+  var fit = SM.regressPooled(base, acc);
+  near('pooled: Pb multiplier recovered', fit.tuning.pbMult, 1.07, 0.01);
+  near('pooled: Bo multiplier recovered', fit.tuning.boMult, 0.94, 0.01);
+  near('pooled: dead-oil viscosity multiplier recovered', fit.tuning.muodMult, 1.35, 0.02);
+  ok('pooled: every sample reported, tuned AARE below 1 %', fit.perSample.length === 4 &&
+     fit.props.filter(function (p) { return p.n; }).every(function (p) { return p.after < 1 && p.after <= p.before + 1e-9; }),
+     JSON.stringify(fit.props.map(function (p) { return [p.key, p.after]; })));
+  var one = SM.regressPooled(base, [good[0]]);
+  var direct = TU.regress(SM.sampleInput(base, good[0]), good[0].lab);
+  ok('one accepted sample: identical to the single-report regression',
+     M.TUNING_KEYS.every(function (k) { return Math.abs(one.tuning[k] - direct.tuning[k]) < 1e-12; }));
+  var fam = SM.rankFamilyPooled(base, acc, TU.FAMILIES.oil[1]);
+  ok('pooled ranking scores every Bo correlation and picks the generating one',
+     fam.rows.length === TU.FAMILIES.oil[1].list.length && fam.best === 'standing', JSON.stringify(fam && fam.best));
+})();
+
+section('23. Project files and credits');
+(function () {
+  var state = {
+    name: 'Field X / study 2', fluid: 'oil', units: 'metric', labMode: 'several', now: new Date('2026-09-27T13:31:00Z'),
+    inputs: { oil: { inputs: { fluid: 'oil', api: 34, lab: { rows: [] }, tune: true }, preset: '' }, gas: null },
+    lab: { oil: { pb: 2700, rows: [] }, gas: { rows: [] } },
+    samples: { list: [{ id: 'a', name: 'A-1' }], fieldTune: true }
+  };
+  var packed = PJ.pack(state);
+  var back = PJ.unpack(JSON.stringify(packed));
+  ok('project round-trips fluid, units, mode, inputs, lab and samples',
+     back.fluid === 'oil' && back.units === 'metric' && back.labMode === 'several' && back.inputs.oil.inputs.api === 34 &&
+     back.lab.oil.pb === 2700 && back.samples.list[0].name === 'A-1' && back.samples.fieldTune && back.inputs.gas === null);
+  ok('case inputs are saved without their laboratory copy', packed.inputs.oil.inputs.lab === undefined && packed.inputs.oil.inputs.tune === undefined);
+  ok('project carries the author', /Ankaj Kumar Sinha/.test(packed.copyright));
+  var threw = function (t) { try { PJ.unpack(t); return null; } catch (e) { return e.message; } };
+  ok('not JSON is refused', /not valid JSON/.test(threw('{nope')));
+  ok('another JSON file is refused', /not a PVT Generator project/.test(threw('{"a":1}')));
+  ok('a newer format is refused', /newer version/.test(threw(JSON.stringify({ kind: 'pvt-project', version: 99, inputs: {} }))));
+  ok('file name from the project name and time', PJ.filename('Field X / study 2', new Date('2026-09-27T13:31:00Z')) === 'Field-X-study-2_2026-09-27_1331.json',
+     PJ.filename('Field X / study 2', new Date('2026-09-27T13:31:00Z')));
+
+  var m = M.build({ api: 35, gammaG: 0.75, rsb: 600, tempF: 180 });
+  var g = M.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12, apiC: 58, tempF: 230, pMax: 6000 });
+  ok('every deck and file header carries the copyright', ['eclipse', 'cmg', 'csv'].every(function (f) {
+    return /Copyright \(c\) 2026 Ankaj Kumar Sinha/.test(E.generate(m, f, 'field')) &&
+           /Copyright \(c\) 2026 Ankaj Kumar Sinha/.test(E.generate(g, f, 'field'));
+  }));
+  var js = JSON.parse(E.generate(m, 'json', 'field'));
+  ok('JSON export names the generator and its author', js.generator === 'Black-Oil PVT Generator' && /Ankaj Kumar Sinha/.test(js.copyright) && js.pb > 0);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

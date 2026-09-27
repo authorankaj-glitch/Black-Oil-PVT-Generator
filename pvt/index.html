@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="author" content="Ankaj Kumar Sinha">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Black-Oil PVT Generator</title>
 <meta name="description" content="Interactive PVT correlation generator for oil reservoirs and gas reservoirs (dry gas and wet gas) plus formation water, with simulator-ready export.">
@@ -18,7 +19,7 @@
     </svg>
     <div class="brand-text">
       <h1>Black-Oil PVT Generator <span class="brand-tag">PVT</span></h1>
-      <span class="brand-sub">Correlation-based fluid properties for oil and gas reservoirs &middot; simulator-ready export</span>
+      <span class="brand-sub">Correlation-based fluid properties for oil and gas reservoirs, by Ankaj Kumar Sinha</span>
     </div>
   </div>
   <div class="topbar-actions">
@@ -37,12 +38,34 @@
   <!-- ------------------------------------------------ inputs ------ -->
   <form class="panel sidebar" id="inputs" autocomplete="off">
     <div class="sidebar-head"><h2>Case inputs</h2><span>Recalculates as you type</span></div>
+    <fieldset class="project-set">
+      <legend>Project</legend>
+      <div class="field wide"><input type="text" id="projectName" maxlength="120" placeholder="Project name (optional)" aria-label="Project name"></div>
+      <div class="project-actions">
+        <button type="button" id="btnSaveProject">Save project</button>
+        <button type="button" id="btnOpenProject">Open project</button>
+        <input type="file" id="projectFile" accept=".json,application/json" hidden>
+      </div>
+      <p class="hint" id="projectStatus" role="status">Your work is also kept in this browser between visits.</p>
+    </fieldset>
     <fieldset>
       <legend>Reservoir fluid system</legend>
       <div class="seg fluid-seg" role="group" aria-label="Reservoir fluid for the PVT calculation">
         <button type="button" id="fluidOil" aria-pressed="true">Oil reservoir</button>
         <button type="button" id="fluidGas" aria-pressed="false">Gas reservoir</button>
       </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Laboratory data</legend>
+      <div class="field wide">
+        <select id="labMode" aria-label="How laboratory data is used">
+          <option value="none">None &mdash; published correlations only</option>
+          <option value="one">One PVT report &mdash; tune to it</option>
+          <option value="several">Several PVT reports &mdash; screen, then tune field-wide</option>
+        </select>
+      </div>
+      <p class="hint" id="labModeHint"></p>
     </fieldset>
 
     <fieldset>
@@ -173,8 +196,6 @@
         </select></div>
     </fieldset>
 
-    <p class="hint">Laboratory data and correlation tuning live on the <strong>Lab data &amp; tuning</strong> tab.</p>
-
     <div class="export-bar sidebar-actions">
       <button type="button" id="btnReset">Reset defaults</button>
       <button type="button" id="btnShare">Copy link to case</button>
@@ -231,6 +252,8 @@
     </section>
 
     <section id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" hidden>
+      <div id="labModeNote"></div>
+      <div class="mode-one">
       <div class="lab-step">
         <h2><span class="step-no">1</span>Laboratory data</h2>
         <p class="hint">Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub> &mdash; the basis a simulator uses &mdash; not raw differential-liberation values. Leave any cell blank. <span class="oil-only">Rows above the bubble point carry the undersaturated B<sub>o</sub> and oil viscosity; gas z and viscosity are the liberated gas.</span><span class="gas-only" hidden>z and viscosity are those of the reservoir gas.</span> Copy a block from a spreadsheet and paste it into any cell.</p>
@@ -238,12 +261,22 @@
           <div class="field"><label for="labPb">Measured bubble point <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPb" step="10" placeholder="&mdash;"></div>
           <div class="field"><label for="labMuod">Dead-oil viscosity at T<sub>res</sub> <span class="unit">cp</span></label><input type="number" id="labMuod" step="0.1" placeholder="&mdash;"></div>
         </div>
+        <details class="lab-sampling oil-only">
+          <summary>Sampling conditions (optional &mdash; for the representativity checks)</summary>
+          <div class="lab-scalars">
+            <div class="field"><label for="labType">Sample type</label><select id="labType"><option value="bhs">Bottomhole</option><option value="sep">Separator recombination</option></select></div>
+            <div class="field"><label for="labPRes">Reservoir pressure at sampling <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPRes" step="10" placeholder="&mdash;"></div>
+            <div class="field" id="rowLabPwf"><label for="labPwf">Flowing pressure at sampling <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPwf" step="10" placeholder="&mdash;"></div>
+            <div class="field"><label for="labGor">Producing GOR at sampling <span class="unit" data-unit="rs">scf/STB</span></label><input type="number" id="labGor" step="10" placeholder="&mdash;"></div>
+          </div>
+        </details>
         <div class="table-wrap lab-wrap"><table id="labTable" class="lab-table"></table></div>
         <div class="export-bar lab-actions">
           <button type="button" id="btnAddRow">Add row</button>
           <button type="button" id="btnClearLab" class="ghost">Clear laboratory data</button>
           <span id="labStatus" class="hint" role="status"></span>
         </div>
+        <div id="labChecks" class="oil-only"></div>
       </div>
 
       <div class="lab-step">
@@ -269,6 +302,53 @@
         <div class="table-wrap"><table id="tuneTable"></table></div>
         <div class="chart-grid" id="labCharts" style="margin-top:14px"></div>
       </div>
+      </div>
+      <div class="mode-several">
+      <div class="lab-step">
+        <h2><span class="step-no">1</span>PVT samples</h2>
+        <p class="hint">One entry per PVT report from this reservoir &mdash; bottomhole samples, separator recombinations, repeat studies. Each keeps its own oil gravity, gas gravity, R<sub>sb</sub> and temperature; all use the correlations selected in the case inputs. Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub>, not raw differential-liberation values. The sampling pressures, producing GOR and bottomhole sampling depth are optional but drive the representativity and depth-trend checks.</p>
+        <div class="export-bar">
+          <button type="button" id="btnSampleAdd">Add sample</button>
+          <button type="button" id="btnSampleDemo" class="ghost">Load an example field</button>
+          <button type="button" id="btnSampleClear" class="ghost">Remove all samples</button>
+        </div>
+        <div id="sampleList"></div>
+      </div>
+
+      <div class="lab-step">
+        <h2><span class="step-no">2</span>Screen the samples</h2>
+        <p class="hint">Every sample is checked on its own (representativity, trends, Bo&ndash;Rs consistency, points out of line) and against the others: a sample biased away from the correlation differently from its neighbours, or off the depth trend of the other bottomhole samples, is a bad sample or a different fluid. Samples that fail are left out of the fit; override with the Use box. Select a sample to read its checks.</p>
+        <div id="screenSummary"></div>
+        <div class="table-wrap"><table id="screenTable" class="screen-table"></table></div>
+        <div id="screenDetail"></div>
+        <div class="chart-grid samples-chart" id="screenCharts" style="margin-top:14px"></div>
+      </div>
+
+      <div class="lab-step">
+        <h2><span class="step-no">3</span>Fit the correlations to the accepted samples</h2>
+        <p class="hint">One multiplier per property, shared by every accepted sample and fitted to all their points together &mdash; a field-wide correction rather than one sample's. Ranking swaps in every correlation and scores it on the pooled data.</p>
+        <div class="export-bar">
+          <button type="button" id="btnPoolRank">Rank correlations on the accepted samples</button>
+          <button type="button" id="btnPoolBest" class="primary" hidden>Use the best-fitting correlations</button>
+          <span id="poolStatus" class="hint" role="status"></span>
+        </div>
+        <div id="poolRank"></div>
+        <div id="poolNotes"></div>
+        <div class="table-wrap"><table id="poolTable"></table></div>
+        <div class="table-wrap" style="margin-top:12px"><table id="poolSampleTable"></table></div>
+        <div class="chart-grid samples-chart" id="poolCharts" style="margin-top:14px"></div>
+      </div>
+
+      <div class="lab-step">
+        <h2><span class="step-no">4</span>Apply to the case</h2>
+        <label class="switch"><input type="checkbox" id="fieldTuneOn"> Use the field-wide tuning for the tables and exports</label>
+        <p class="hint" style="margin-top:10px">The multipliers act on the fluid in the case inputs. To build the tables for one of the samples, make it the case: its oil gravity, gas gravity, R<sub>sb</sub> and temperature go to the case inputs, and its laboratory data to the one-report table.</p>
+        <div class="export-bar">
+          <div class="field"><label for="caseSample">Sample</label><select id="caseSample"></select></div>
+          <button type="button" id="btnLoadSample">Make this sample the case</button>
+        </div>
+      </div>
+      </div>
     </section>
 
     <section id="panel-export" role="tabpanel" aria-labelledby="tab-export" hidden>
@@ -291,6 +371,10 @@
 
     <section id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
       <div class="panel doc">
+        <div class="about-card">
+          <strong>Black-Oil PVT Generator</strong>
+          <span>Designed and developed by Ankaj Kumar Sinha. &copy; 2026 Ankaj Kumar Sinha, released under the MIT licence. Source: <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator" target="_blank" rel="noopener">github.com/authorankaj-glitch/Black-Oil-PVT-Generator</a>. Please cite the tool and its author when you use its tables in a report.</span>
+        </div>
         <h2>What this tool does</h2>
         <p class="hint">It builds a consistent black-oil PVT model from routine field inputs &mdash; stock-tank oil gravity, separator gas gravity, reservoir temperature and either the solution GOR or the bubble-point pressure &mdash; and writes it out in the formats reservoir simulators read.</p>
         <h3>Calculation sequence</h3>
@@ -321,6 +405,8 @@
         </ol>
         <p class="hint">In gas mode the <strong>barrel</strong> holds the reservoir gas from 1 Mscf of separator gas, with molecules thinning as it expands. The <strong>phase envelope</strong> has its critical point at the gas pseudo-critical properties and its cricondentherm below the reservoir temperature, and the separator point shows whether liquid forms at the surface.</p>
 
+        <h3>Laboratory data: none, one report or several</h3>
+        <p class="hint">The <em>Laboratory data</em> choice in the case inputs sets the workflow. <em>None</em> uses the published correlations. <em>One PVT report</em> checks the study (sampling conditions, trends, B<sub>o</sub>&ndash;R<sub>s</sub> consistency, points out of line), ranks the correlations against it and tunes them to it. <em>Several PVT reports</em> (oil reservoirs) runs the same checks on every sample, compares the samples with each other &mdash; each one's bias against the correlation by a robust median/MAD z-score, oil gravity, and for bottomhole samples temperature, P<sub>b</sub> and R<sub>sb</sub> against the depth trend of the others (Theil&ndash;Sen line, leave one out) &mdash; and fits one set of multipliers to all the accepted samples together, each at its own R<sub>sb</sub> and temperature.</p>
         <h3>Tuning to laboratory data</h3>
         <p class="hint">On the <em>Lab data &amp; tuning</em> tab, measured values regress one multiplier per property, in the order the properties depend on each other. Each fit minimises the AARE of its own property over its own points; the published correlation (multiplier 1) is always a candidate, so tuning never worsens the fit.</p>
         <ol class="hint" style="padding-left:18px">
@@ -348,16 +434,29 @@
   </main>
 </div>
 
+<dialog id="labModeDialog" class="mode-dialog" aria-labelledby="labModeTitle">
+  <h2 id="labModeTitle">Will you tune the correlations to laboratory data?</h2>
+  <p class="hint">This decides which laboratory tools the page shows. You can change it at any time under <strong>Laboratory data</strong> in the case inputs.</p>
+  <div class="mode-choices">
+    <button type="button" data-mode="none"><strong>No laboratory data</strong><span>Build the tables from the published correlations.</span></button>
+    <button type="button" data-mode="one"><strong>One PVT report</strong><span>Enter one study, check it, rank the correlations and tune them to it.</span></button>
+    <button type="button" data-mode="several"><strong>Several PVT reports</strong><span>Screen every sample from the reservoir, keep the sound ones and tune one set of correlations to all of them (oil reservoirs).</span></button>
+  </div>
+  <p class="mode-dialog-foot">Black-Oil PVT Generator &copy; 2026 Ankaj Kumar Sinha</p>
+</dialog>
+
 <footer class="foot">
   <div class="foot-inner">
     <span>Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.</span>
-    <span class="foot-meta">Runs entirely in your browser &middot; MIT licence</span>
+    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; MIT licence &middot; runs entirely in your browser</span>
   </div>
 </footer>
 
 <script src="js/correlations.js"></script>
 <script src="js/pvt-model.js"></script>
 <script src="js/tuning.js"></script>
+<script src="js/samples.js"></script>
+<script src="js/project.js"></script>
 <script src="js/export.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/fluid-state.js"></script>

@@ -267,6 +267,46 @@ three-value calibration (P<sub>b</sub>, B<sub>ob</sub>, &mu;<sub>od</sub>) load
 into the laboratory table and reproduce the same tables. `Model.build()` still
 accepts `calib` for scripts.
 
+### Several PVT reports (oil reservoirs)
+
+With *Several PVT reports* chosen under **Laboratory data**, the lab tab
+becomes **PVT samples & tuning** (`js/samples.js`). Each sample keeps its own
+oil gravity, gas gravity, R<sub>sb</sub> and temperature, optional sampling
+conditions (reservoir and flowing pressure, producing GOR, bottomhole sampling
+depth TVD) and a laboratory table. Every sample is screened:
+
+- on its own: fluid description and correlation ranges; sampling
+  representativity (P<sub>b</sub> above reservoir pressure, a bottomhole sample
+  flowing below P<sub>b</sub>, R<sub>sb</sub> against the producing GOR); measured
+  P<sub>b</sub> against the correlation; R<sub>s</sub>, B<sub>o</sub> and
+  viscosity trends; B<sub>o</sub> against the correlation at the measured
+  R<sub>s</sub>; physical ranges; and points out of line with their
+  neighbours (the sample tuned alone, a residual that jumps from those either
+  side &mdash; a smooth misfit is the correlation's shape and is left alone);
+- against the others: each sample's bias against the correlation for
+  P<sub>b</sub>, B<sub>o</sub> and viscosity by a modified z-score (median/MAD,
+  thresholds 2.5 and 3.5), oil gravity against the field median, and for
+  bottomhole samples temperature, P<sub>b</sub> and R<sub>sb</sub> against the
+  depth trend of the other sound bottomhole samples (Theil&ndash;Sen line, leave
+  one out; 5 / 10 &deg;F and 8 / 15 % for warn / fail).
+
+Samples that fail are left out of the fit unless the engineer ticks them in
+(or out). One multiplier per property is then regressed on all accepted
+samples together, with the same stages and bounds as the single-report
+regression; with one accepted sample it is exactly the single-report
+regression. The correlations can be ranked on the pooled data, and the
+field-wide tuning feeds the tables and decks, whose header names the samples.
+"Make this sample the case" puts a sample's fluid in the case inputs and its
+data in the one-report table.
+
+### Project files
+
+**Save project** writes the whole session to JSON (`js/project.js`: kind
+`pvt-project`, format version 1) &mdash; case inputs of both fluids, units,
+laboratory mode, one-report tables, samples and the field-wide switch &mdash;
+and **Open project** restores it. A file from a newer format is refused with a
+message rather than half-read.
+
 ## Quality control
 
 The Summary tab reports, before anything is exported:
@@ -315,6 +355,8 @@ pvt/
   js/correlations.js    the correlation library (pure functions)
   js/pvt-model.js       model assembly: grids, branches, tuning multipliers, QC
   js/tuning.js          regression against laboratory data, correlation ranking
+  js/samples.js         screening of several PVT reports, field-wide regression
+  js/project.js         project files: save and reopen a session
   js/export.js          ECLIPSE / CMG / CSV / JSON writers
   js/charts.js          SVG charts with crosshair, tooltip and keyboard access
   js/fluid-state.js     cursor-pressure fluid state and the schematic P-T envelope
@@ -323,7 +365,7 @@ pvt/
   tests/run-tests.js    regression tests
 ```
 
-`correlations.js`, `pvt-model.js`, `tuning.js` and `export.js` are UMD modules: the same
+`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `project.js` and `export.js` are UMD modules: the same
 files that the page loads can be `require()`d from Node, so the library is
 usable in a scripted workflow.
 
@@ -350,7 +392,7 @@ console.log(Exp.cmg(tuned, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-222 checks covering reference values for each correlation, the physical
+249 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
@@ -365,7 +407,12 @@ and units, and a sweep of 192 gas cases. The tuning checks regress synthetic
 laboratory data generated from known multipliers and require every multiplier
 back to 0.2 %, plus exact honouring of a measured P<sub>b</sub> and
 &mu;<sub>od</sub>, no-worse-than-untuned fits, correlation ranking, and the
-tuning block in the ECLIPSE and CMG headers.
+tuning block in the ECLIPSE and CMG headers. The several-report checks build
+a synthetic field with a Bo typo, a bottomhole sample that lost gas and a
+recombination at the wrong GOR, and require each to be caught by the right
+check, the sound samples to pass (depth trend included), overrides to work,
+and the field-wide multipliers to be recovered; project files must round-trip
+and refuse foreign or newer files, and every export must carry the copyright.
 
 ## Limitations
 
