@@ -60,6 +60,23 @@ used (the *Laboratory data* choice in the case inputs changes it later):
 
 The multipliers and the fit are written into every deck header.
 
+Reports can also start from the laboratory tests as issued, on the **PVT
+reports & QC** tab: composition, CCE, differential liberation, separator tests
+and viscosity for an oil; well-stream composition, recombination, CCE and gas
+viscosity for a dry or wet gas. Type or paste them, or import one CSV per report
+(download the template from the tab; files saved from Excel, with semicolons and
+decimal commas or tab-separated, all read). Every test is checked for internal
+consistency &mdash; bubble points that agree, the CCE Y-function, undersaturated
+volumes and densities, a stage-by-stage DL density mass balance, the separator
+test against the bubble-point density, the composition and its Hoffman plot, the
+bubble point a Peng&ndash;Robinson equation of state gives from the composition,
+viscosity trends and dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp.
+Readings that fail are flagged and can be left out with a click. The DL is
+converted to the separator basis (Amyx et al. or the ratio form), and the
+accepted, finalised data goes to the one-report tuning or to the PVT samples. A
+report with a composition also draws a computed phase envelope in place of the
+schematic one.
+
 **Save project** writes the whole session &mdash; inputs for both fluids, units,
 laboratory data, samples and choices &mdash; to a JSON file that **Open project**
 reads back, so a study can be stopped midway and picked up later or elsewhere.
@@ -99,6 +116,13 @@ const g = Model.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12,
 console.log(Exp.generate(g, 'cmg', 'field'));
 ```
 
+## What's new
+
+**1.5.0 (2026-10-16)** &mdash; the PVT reports & QC tab: laboratory reports as
+issued, consistency checks, the separator correction of DL data and a
+Peng&ndash;Robinson envelope from the composition. Every major update, with
+what it added and changed, is listed in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Documentation
 
 [`pvt/README.md`](pvt/README.md) covers the full correlation list with
@@ -112,7 +136,7 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-249 checks: reference values for every correlation, the physical invariants a
+264 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis
@@ -121,7 +145,9 @@ structure, a 192-case gas sweep), and the regression against laboratory data
 (recovery of known multipliers from synthetic data, correlation ranking,
 deck headers), the several-report screening (each fault in a synthetic field
 caught by the right check, depth trends, overrides, field-wide multipliers
-recovered) and project files.
+recovered), the PVT report reader and QC (faults planted in example reports
+caught, the separator correction, spreadsheet-saved CSV files, the
+Peng&ndash;Robinson bubble point) and project files.
 
 ## Deployment
 

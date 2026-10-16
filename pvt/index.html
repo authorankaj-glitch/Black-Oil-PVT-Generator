@@ -209,6 +209,7 @@
       <button type="button" role="tab" id="tab-charts" aria-controls="panel-charts" aria-selected="false">Charts</button>
       <button type="button" role="tab" id="tab-tables" aria-controls="panel-tables" aria-selected="false">Tables</button>
       <button type="button" role="tab" id="tab-compare" aria-controls="panel-compare" aria-selected="false">Correlation spread</button>
+      <button type="button" role="tab" id="tab-reports" aria-controls="panel-reports" aria-selected="false" hidden>PVT reports &amp; QC</button>
       <button type="button" role="tab" id="tab-lab" aria-controls="panel-lab" aria-selected="false">Lab data &amp; tuning</button>
       <button type="button" role="tab" id="tab-export" aria-controls="panel-export" aria-selected="false">Export</button>
       <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false">Method</button>
@@ -251,12 +252,46 @@
       <div class="table-wrap" style="margin-top:14px"><table id="compareTable"></table></div>
     </section>
 
+    <section id="panel-reports" role="tabpanel" aria-labelledby="tab-reports" hidden>
+      <div class="lab-step">
+        <h2><span class="step-no">1</span>PVT reports and their tests</h2>
+        <p class="hint" id="repHintTests">Enter each laboratory report as it was issued &mdash; composition, CCE, differential liberation, separator tests and viscosity &mdash; in the units the page shows. Paste a block from a spreadsheet into any cell, or import report files: one CSV per report, several at once. Download the template for the layout; a saved project keeps everything.</p>
+        <div class="export-bar">
+          <button type="button" id="btnRepAdd">Add report</button>
+          <button type="button" id="btnRepImport">Import report files</button>
+          <input type="file" id="repFiles" accept=".csv,.txt,.tsv,.json,text/csv,application/json" multiple hidden>
+          <button type="button" id="btnRepTemplate" class="ghost">Download template</button>
+          <button type="button" id="btnRepDemo" class="ghost">Load example reports</button>
+          <button type="button" id="btnRepClear" class="ghost">Remove all reports</button>
+          <span id="repStatus" class="hint" role="status"></span>
+        </div>
+        <div id="reportList"></div>
+      </div>
+
+      <div class="lab-step" id="repStepCheck">
+        <h2><span class="step-no">2</span>Check and correct</h2>
+        <p class="hint" id="repHintCheck">Every test is checked for internal consistency: bubble points that agree, the CCE Y-function, undersaturated volumes and densities, a stage-by-stage mass balance on the DL, the separator test against the bubble-point density, the composition, the bubble point it gives (Peng-Robinson) and the Hoffman equilibrium plot, the viscosity trends, and finally dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp on the corrected data. Rows that fail are marked in the tables above; untick them or correct them. Choose the corrections here.</p>
+        <div id="repDetail"></div>
+      </div>
+
+      <div class="lab-step">
+        <h2><span class="step-no">3</span>Finalised data</h2>
+        <p class="hint" id="repHintFinal">What the tuning will see, on the separator basis: DL stages corrected with B<sub>ofb</sub>/B<sub>odb</sub> below P<sub>b</sub>, CCE volumes times B<sub>ofb</sub> above it, viscosities on the matching pressures. Accept the report when you are satisfied with it.</p>
+        <div id="repFinal"></div>
+      </div>
+
+      <div class="lab-step">
+        <h2><span class="step-no">4</span>Send to tuning</h2>
+        <div id="repSend"></div>
+      </div>
+    </section>
+
     <section id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" hidden>
       <div id="labModeNote"></div>
       <div class="mode-one">
       <div class="lab-step">
         <h2><span class="step-no">1</span>Laboratory data</h2>
-        <p class="hint">Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub> &mdash; the basis a simulator uses &mdash; not raw differential-liberation values. Leave any cell blank. <span class="oil-only">Rows above the bubble point carry the undersaturated B<sub>o</sub> and oil viscosity; gas z and viscosity are the liberated gas.</span><span class="gas-only" hidden>z and viscosity are those of the reservoir gas.</span> Copy a block from a spreadsheet and paste it into any cell.</p>
+        <p class="hint">Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub> &mdash; the basis a simulator uses &mdash; not raw differential-liberation values. Leave any cell blank. <span class="oil-only">Rows above the bubble point carry the undersaturated B<sub>o</sub> and oil viscosity; gas z and viscosity are the liberated gas.</span><span class="gas-only" hidden>z and viscosity are those of the reservoir gas.</span> Copy a block from a spreadsheet and paste it into any cell.<span class="oil-only"> To start from the raw report tests instead, use the <em>PVT reports &amp; QC</em> tab.</span></p>
         <div class="lab-scalars oil-only">
           <div class="field"><label for="labPb">Measured bubble point <span class="unit" data-unit="p">psia</span></label><input type="number" id="labPb" step="10" placeholder="&mdash;"></div>
           <div class="field"><label for="labMuod">Dead-oil viscosity at T<sub>res</sub> <span class="unit">cp</span></label><input type="number" id="labMuod" step="0.1" placeholder="&mdash;"></div>
@@ -306,7 +341,7 @@
       <div class="mode-several">
       <div class="lab-step">
         <h2><span class="step-no">1</span>PVT samples</h2>
-        <p class="hint">One entry per PVT report from this reservoir &mdash; bottomhole samples, separator recombinations, repeat studies. Each keeps its own oil gravity, gas gravity, R<sub>sb</sub> and temperature; all use the correlations selected in the case inputs. Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub>, not raw differential-liberation values. The sampling pressures, producing GOR and bottomhole sampling depth are optional but drive the representativity and depth-trend checks.</p>
+        <p class="hint">One entry per PVT report from this reservoir &mdash; bottomhole samples, separator recombinations, repeat studies. Each keeps its own oil gravity, gas gravity, R<sub>sb</sub> and temperature; all use the correlations selected in the case inputs. Enter separator-adjusted (flash-corrected) R<sub>s</sub> and B<sub>o</sub>, not raw differential-liberation values. The sampling pressures, producing GOR and bottomhole sampling depth are optional but drive the representativity and depth-trend checks. Reports checked and corrected on the <em>PVT reports &amp; QC</em> tab arrive here as samples.</p>
         <div class="export-bar">
           <button type="button" id="btnSampleAdd">Add sample</button>
           <button type="button" id="btnSampleDemo" class="ghost">Load an example field</button>
@@ -391,7 +426,8 @@
         <p class="hint">The barrel and the phase envelope on the Summary tab share one pressure cursor with every chart on the page. Hover a curve, drag the slider, drag the phase diagram, or press Play depletion.</p>
         <ul class="hint" style="padding-left:18px">
           <li><strong>Barrel</strong> &mdash; one stock-tank barrel of oil plus its solution gas at the cursor pressure. Liquid volume is B<sub>o</sub>(p); free gas volume is [R<sub>sb</sub> &minus; R<sub>s</sub>(p)]&middot;B<sub>g</sub>(p)/5.614583. Specks in the liquid are dissolved gas (density tracks R<sub>s</sub>/R<sub>sb</sub>); the cap and the rising bubbles are gas that has come out of solution.</li>
-          <li><strong>Phase envelope</strong> &mdash; <em>schematic</em>. A true envelope needs a compositional EOS; this one is built to pass exactly through the calculated (T<sub>res</sub>, P<sub>b</sub>), with the critical temperature placed by a volatility index from R<sub>sb</sub> and API gravity. The bubble point is calculated; the shape around it is constructed. Use it to read the fluid type and the depletion path, not to quote a cricondentherm.</li>
+          <li><strong>Phase envelope</strong> &mdash; <em>schematic</em> until a PVT report with a composition is chosen above the diagram (sending a report to the case chooses it). The schematic one passes exactly through the calculated (T<sub>res</sub>, P<sub>b</sub>), with the critical temperature placed by a volatility index from R<sub>sb</sub> and API gravity; use it to read the fluid type and the depletion path, not to quote a cricondentherm.</li>
+          <li><strong>Envelope from a composition</strong> &mdash; Peng&ndash;Robinson (1976/78). C7+ spread over C7&ndash;C50 by an exponential distribution honouring its MW, Soreide specific gravities honouring its SG, Kesler&ndash;Lee critical properties, lumped into three pseudo-components. Michelsen stability on each isotherm finds the two-phase edges; the upper edge is a bubble point where vapour appears first, a dew point where liquid does, which locates the critical point. For an oil the C1&ndash;C7+ interaction coefficient is regressed so the envelope passes through the case bubble point; a gas envelope is untuned. Expect the composition alone to give saturation pressures within 10&ndash;15 %.</li>
         </ul>
 
         <h3>Gas reservoirs (dry gas and wet gas)</h3>
@@ -407,6 +443,12 @@
 
         <h3>Laboratory data: none, one report or several</h3>
         <p class="hint">The <em>Laboratory data</em> choice in the case inputs sets the workflow. <em>None</em> uses the published correlations. <em>One PVT report</em> checks the study (sampling conditions, trends, B<sub>o</sub>&ndash;R<sub>s</sub> consistency, points out of line), ranks the correlations against it and tunes them to it. <em>Several PVT reports</em> (oil reservoirs) runs the same checks on every sample, compares the samples with each other &mdash; each one's bias against the correlation by a robust median/MAD z-score, oil gravity, and for bottomhole samples temperature, P<sub>b</sub> and R<sub>sb</sub> against the depth trend of the others (Theil&ndash;Sen line, leave one out) &mdash; and fits one set of multipliers to all the accepted samples together, each at its own R<sub>sb</sub> and temperature.</p>
+        <h3>PVT reports and QC</h3>
+        <p class="hint">The <em>PVT reports &amp; QC</em> tab takes reports as the laboratory issued them, checks each one, applies the corrections and hands the accepted, finalised data to the tuning. A reading is left out by unticking it or by clicking it on any QC chart; a second click brings it back.</p>
+        <ul class="hint" style="padding-left:18px">
+          <li><strong>Oil</strong> &mdash; bubble points agree (CCE, DL, reported); CCE Y-function linear in p; undersaturated c<sub>o</sub> and &rho; = &rho;<sub>b</sub>/(V/V<sub>sat</sub>); DL trends, stage-by-stage density mass balance and B<sub>t</sub>; separator test against the DL and the bubble-point density; composition total, C7+ Watson K, separator gas gravity, Hoffman plot (hydrocarbons) and the Peng&ndash;Robinson bubble point of the composition; viscosity trends; dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp. DL to separator basis by Amyx et al. or the ratio form; CCE volumes times B<sub>ofb</sub> above P<sub>b</sub>; R<sub>s</sub> of the atmospheric DL stage left out of the tuning.</li>
+          <li><strong>Gas (dry and wet)</strong> &mdash; composition total, C7+, separator gas gravity and Hoffman plot; the Peng&ndash;Robinson envelope of the well stream (reservoir temperature above the cricondentherm, separator inside it for a wet gas); well-stream gravity from the composition against McCain&rsquo;s recombination; laboratory against producing CGR; liquid dropout at reservoir temperature (a condensate); measured z against z from the composition (Kay, Kesler&ndash;Lee C7+, Wichert&ndash;Aziz, DAK); p&middot;V/z constant along the CCE; viscosity against Lee&ndash;Gonzalez&ndash;Eakin. The finalised data is z and gas viscosity against pressure, with the fluid description for the case inputs.</li>
+        </ul>
         <h3>Tuning to laboratory data</h3>
         <p class="hint">On the <em>Lab data &amp; tuning</em> tab, measured values regress one multiplier per property, in the order the properties depend on each other. Each fit minimises the AARE of its own property over its own points; the published correlation (multiplier 1) is always a candidate, so tuning never worsens the fit.</p>
         <ol class="hint" style="padding-left:18px">
@@ -425,10 +467,11 @@
           <li>The gas-mode CMG deck follows the <code>*GASWATER</code> / <code>*GASWATER_WITH_CONDENSATE</code> keyword set; check it on import into Builder, as CMG keyword sets vary between IMEX versions.</li>
           <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
           <li>Tuning adjusts one multiplier per property; it bends a correlation towards the data but cannot change the shape of its curve. A multiplier that stops at its search limit means the correlation does not suit the fluid &mdash; rank the correlations and pick another.</li>
-          <li>The phase envelope is a schematic construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data.</li>
+          <li>The schematic phase envelope is a construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data. The envelope from a composition is an equation-of-state estimate with a C7+ known only by its MW and SG.</li>
+          <li>The report QC flags inconsistencies; it does not decide. A report that fails can still be accepted &mdash; say why in the study.</li>
         </ul>
         <h3>References</h3>
-        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993).</p>
+        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993). Report QC and the equation of state: Hoffman, Crump &amp; Hocott (1953); Amyx, Bass &amp; Whiting (1960); Peng &amp; Robinson (1976); Kesler &amp; Lee (1976); Standing (1977); Michelsen (1982); Katz (1983); Whitson (1983); Soreide (1989).</p>
       </div>
     </section>
   </main>
@@ -448,7 +491,7 @@
 <footer class="foot">
   <div class="foot-inner">
     <span>Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.</span>
-    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; MIT licence &middot; runs entirely in your browser</span>
+    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; MIT licence &middot; runs entirely in your browser &middot; <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version">v1.5.0 &ndash; what&rsquo;s new</a></span>
   </div>
 </footer>
 
@@ -456,6 +499,9 @@
 <script src="js/pvt-model.js"></script>
 <script src="js/tuning.js"></script>
 <script src="js/samples.js"></script>
+<script src="js/eos.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/gas-reports.js"></script>
 <script src="js/project.js"></script>
 <script src="js/export.js"></script>
 <script src="js/charts.js"></script>

@@ -391,15 +391,17 @@
     var o = this.opts, env = o.env, self = this;
     var gas = env.kind && env.kind !== 'oil';
     card(this.host, 'Pressure-temperature phase envelope',
-      gas ? 'Schematic envelope sized from the gas pseudo-critical properties — a true envelope needs a compositional EOS'
-          : 'Schematic envelope anchored to the computed bubble point — a true envelope needs a compositional EOS');
+      env.eos ? 'Peng-Robinson envelope of the composition of ' + env.meta.source +
+        (gas ? ' (untuned)' : env.meta.matched ? ', C1–C7+ interaction adjusted to the case bubble point' : ' (untuned)')
+      : gas ? 'Schematic envelope sized from the gas pseudo-critical properties — a true envelope needs a composition'
+          : 'Schematic envelope anchored to the computed bubble point — a true envelope needs a composition');
 
     var wrap = document.createElement('div');
     wrap.className = 'phase-wrap';
     this.host.appendChild(wrap);
 
     var svg = el('svg', { viewBox: '0 0 ' + PW + ' ' + PH, class: 'phase-svg', tabindex: '0',
-      role: 'img', 'aria-label': 'Schematic pressure-temperature phase envelope with the reservoir isotherm' });
+      role: 'img', 'aria-label': (env.eos ? 'Computed' : 'Schematic') + ' pressure-temperature phase envelope with the reservoir isotherm' });
     this.svg = svg;
     wrap.appendChild(svg);
 
@@ -557,7 +559,23 @@
 
     var note = document.createElement('p');
     note.className = 'hint phase-note';
-    if (!gas) {
+    var T = function (t) { return o.fmt('T', t) + ' ' + o.label('T'); }, Pp = function (p) { return o.fmt('p', p) + ' ' + o.label('p'); };
+    if (env.eos && !gas) {
+      var mt = env.meta;
+      note.textContent = 'Critical point ' + T(env.tc) + ', ' + Pp(env.pc) + '; cricondenbar ' + Pp(env.pcb) + '; cricondentherm ' + T(env.tct) +
+        '. Classified as a ' + env.fluidType + ': the critical temperature sits ' + o.convDeltaT(Math.abs(env.dT)).toFixed(0) + ' ' + o.label('T') +
+        (env.dT >= 0 ? ' above' : ' below') + ' the reservoir temperature. ' +
+        (mt.pbBase ? 'The composition alone gives a bubble point of ' + Pp(mt.pbBase) + ' at reservoir temperature' +
+          (mt.matched ? '; the C1–C7+ interaction coefficient (' + mt.kPlus.toFixed(3) + ') brings it to the case ' + Pp(env.pb) + '.' :
+            ', which the C1–C7+ interaction alone cannot bring to the case ' + Pp(env.pb) + ' - check the composition.') : '');
+    } else if (env.eos) {
+      note.textContent = 'Cricondentherm ' + T(env.tct) + ', cricondenbar ' + Pp(env.pcb) + '. ' +
+        (env.fluidType === 'gas condensate'
+          ? 'The reservoir temperature lies below the cricondentherm' + (env.meta.dew ? ' (computed dew point ' + Pp(env.meta.dew) + ')' : '') +
+            ': by this composition a gas condensate, which the dry- and wet-gas tables do not model. An untuned EOS places the cricondentherm only to some tens of degrees.'
+          : 'The reservoir temperature lies above the cricondentherm, so the gas stays single-phase in the reservoir; the separator lies ' +
+            (env.sep.inside ? 'inside the envelope: a wet gas.' : 'outside the envelope: a dry gas.'));
+    } else if (!gas) {
       note.textContent = 'Classified as a ' + env.fluidType + ': the critical temperature sits about ' +
         o.convDeltaT(env.dT).toFixed(0) + ' ' + o.label('T') + ' above the reservoir temperature.';
     } else if (env.kind === 'wet') {

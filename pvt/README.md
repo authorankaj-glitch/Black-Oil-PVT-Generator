@@ -299,11 +299,66 @@ field-wide tuning feeds the tables and decks, whose header names the samples.
 "Make this sample the case" puts a sample's fluid in the case inputs and its
 data in the one-report table.
 
+### PVT reports and QC
+
+With laboratory data in use, the **PVT reports & QC** tab takes reports as the
+laboratory issued them (`js/reports.js` for oils, `js/gas-reports.js` for dry
+and wet gases), checks each test, applies the corrections and hands the
+accepted, finalised data to the tuning.
+
+* **Input** &mdash; one card per report with its tests: composition (reservoir
+  fluid, separator gas and liquid, C7+ MW and SG), CCE, differential liberation,
+  one or more separator tests (the one marked *Use* supplies R<sub>sfb</sub>,
+  B<sub>ofb</sub>, the API and the gas gravity) and viscosity. Paste a block from
+  a spreadsheet, or import CSV files built from the template (one per report;
+  sections `[report]`, `[cce]`, `[dl]`, `[separator: name]`, `[viscosity]`,
+  `[composition]`; gas reports add `[recombination]`). Rows padded with
+  separators, quoted cells, semicolon files with decimal commas and tab-separated
+  files are all read.
+* **Oil checks** &mdash; bubble points agree (CCE, DL, reported); CCE relative
+  volume trend and Y-function (Standing, 1977) linear below P<sub>b</sub>;
+  undersaturated c<sub>o</sub> and &rho; = &rho;<sub>b</sub>/(V/V<sub>sat</sub>);
+  DL trends, stage-by-stage density mass balance and B<sub>t</sub>; separator
+  test against the DL and against the bubble-point density; composition total,
+  C7+ Watson K, separator gas gravity, Hoffman plot (Hoffman, Crump and Hocott,
+  1953) and the Peng&ndash;Robinson bubble point of the composition (`js/eos.js`);
+  viscosity trends; and dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp on
+  the finalised data.
+* **Gas checks** &mdash; composition, C7+, separator gas gravity and Hoffman
+  plot; the Peng&ndash;Robinson envelope of the well stream (reservoir
+  temperature above the cricondentherm, separator inside it for a wet gas);
+  well-stream gravity from the composition against McCain's recombination;
+  laboratory against producing CGR; liquid dropout; measured z against z from
+  the composition; p&middot;V/z constant along the CCE; viscosity against
+  Lee&ndash;Gonzalez&ndash;Eakin.
+* **Corrections** &mdash; DL to separator basis below P<sub>b</sub> with
+  f = B<sub>ofb</sub>/B<sub>odb</sub>: Amyx, Bass and Whiting (1960)
+  B<sub>o</sub> = B<sub>od</sub> f, R<sub>s</sub> = R<sub>sfb</sub> &minus;
+  (R<sub>sdb</sub> &minus; R<sub>sd</sub>) f, or the ratio form R<sub>s</sub> =
+  R<sub>sd</sub> R<sub>sfb</sub>/R<sub>sdb</sub>; above P<sub>b</sub>
+  B<sub>o</sub> = (V/V<sub>sat</sub>) B<sub>ofb</sub>, optionally from the
+  smoothed CCE curve. The CCE bubble point is the reading nearest
+  V/V<sub>sat</sub> = 1 (or the crossing between two readings). R<sub>s</sub> of
+  the atmospheric DL stage is left out of the tuning.
+* **Decisions stay with the engineer** &mdash; flagged rows are marked in the
+  tables; a reading is left out by unticking it or clicking it on any QC chart.
+  A report that fails can still be accepted. Accepted reports go to the
+  one-report tuning (fluid description, separator conditions, separator-gas
+  CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub>, finalised rows) or, with several
+  reports, to the PVT samples.
+* **Phase envelope from a composition** &mdash; Peng&ndash;Robinson (1976/78)
+  with the C7+ split over C7&ndash;C50 (exponential distribution honouring its
+  MW, Soreide gravities honouring its SG, Kesler&ndash;Lee critical properties,
+  three pseudo-components) and Michelsen stability. For an oil the
+  C1&ndash;C7+ interaction coefficient is regressed so the envelope passes
+  through the case bubble point; a gas envelope is untuned.
+
 ### Project files
 
 **Save project** writes the whole session to JSON (`js/project.js`: kind
 `pvt-project`, format version 1) &mdash; case inputs of both fluids, units,
-laboratory mode, one-report tables, samples and the field-wide switch &mdash;
+laboratory mode, one-report tables, samples and the field-wide switch, and the
+PVT reports with the report that draws each fluid's phase envelope &mdash;
 and **Open project** restores it. A file from a newer format is refused with a
 message rather than half-read.
 
@@ -356,6 +411,9 @@ pvt/
   js/pvt-model.js       model assembly: grids, branches, tuning multipliers, QC
   js/tuning.js          regression against laboratory data, correlation ranking
   js/samples.js         screening of several PVT reports, field-wide regression
+  js/eos.js             Peng-Robinson equation of state: C7+ split, stability, flash, envelope
+  js/reports.js         oil PVT reports: CSV import, QC checks, separator correction
+  js/gas-reports.js     dry and wet gas PVT reports: import, QC, finalised z and viscosity
   js/project.js         project files: save and reopen a session
   js/export.js          ECLIPSE / CMG / CSV / JSON writers
   js/charts.js          SVG charts with crosshair, tooltip and keyboard access
@@ -365,7 +423,7 @@ pvt/
   tests/run-tests.js    regression tests
 ```
 
-`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `project.js` and `export.js` are UMD modules: the same
+`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `eos.js`, `reports.js`, `gas-reports.js`, `project.js` and `export.js` are UMD modules: the same
 files that the page loads can be `require()`d from Node, so the library is
 usable in a scripted workflow.
 
@@ -392,7 +450,7 @@ console.log(Exp.cmg(tuned, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-249 checks covering reference values for each correlation, the physical
+264 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
@@ -413,6 +471,12 @@ recombination at the wrong GOR, and require each to be caught by the right
 check, the sound samples to pass (depth trend included), overrides to work,
 and the field-wide multipliers to be recovered; project files must round-trip
 and refuse foreign or newer files, and every export must carry the copyright.
+The PVT-report checks require the example reports to pass and the faults planted
+in the repeat study to be caught, the Amyx separator correction to be exact, a
+spreadsheet-saved CSV (padded rows, a quoted name, an inline comment, semicolons
+with decimal commas) to read the same, the CCE bubble point to be the reading at
+V/V<sub>sat</sub> = 1, the gas examples to classify and screen correctly, and the
+Peng&ndash;Robinson bubble point to be found and matched to a target.
 
 ## Limitations
 
@@ -428,7 +492,12 @@ and refuse foreign or newer files, and every export must carry the copyright.
 * CMG keyword sets vary between IMEX versions; check a generated gas deck on
   first import into Builder.
 * Water is treated as undersaturated (no dissolved gas), matching `PVTW`.
-* The phase envelope is schematic (see above). In oil mode only the bubble point
+* Without a report composition the phase envelope is schematic (see above). An
+  envelope from a composition is an untuned equation of state with the C7+ known
+  only by its MW and SG; expect saturation pressures within 10&ndash;15 %.
+* The report QC flags inconsistencies; it does not decide. A failing report can
+  be accepted &mdash; say why in the study.
+* The schematic phase envelope (see above). In oil mode only the bubble point
   it passes through is calculated; in gas mode nothing on it is &mdash; it is
   placed from the pseudo-critical properties.
 * Surface conditions are 14.696 psia and 60 °F. Metric output uses the

@@ -18,6 +18,9 @@
  *               the case inputs of each fluid (as the page reads them)
  *     lab:      { oil, gas }         the one-report laboratory tables
  *     samples:  { list, fieldTune }  the PVT samples and the field-wide switch
+ *     reports:  { list, pick, envSource }  raw PVT reports (oil and gas), and the report
+ *               whose composition draws each fluid's phase envelope - optional;
+ *               files saved before reports existed open with none
  *   }
  *
  * Reading a file checks its kind and version and fills anything missing
@@ -62,7 +65,8 @@
       labMode: pick(state.labMode, ['none', 'one', 'several'], 'none'),
       inputs: inputs,
       lab: state.lab || null,
-      samples: state.samples || { list: [], fieldTune: false }
+      samples: state.samples || { list: [], fieldTune: false },
+      reports: state.reports && Array.isArray(state.reports.list) ? state.reports : { list: [], pick: null }
     };
   }
 
@@ -89,11 +93,15 @@
     var lab = isObj(o.lab) ? o.lab : null;
     var samples = isObj(o.samples) && Array.isArray(o.samples.list)
       ? { list: o.samples.list.filter(isObj), fieldTune: !!o.samples.fieldTune } : { list: [], fieldTune: false };
+    var reports = isObj(o.reports) && Array.isArray(o.reports.list)
+      ? { list: o.reports.list.filter(isObj), pick: o.reports.pick || null,
+          envSource: isObj(o.reports.envSource) ? { oil: o.reports.envSource.oil || null, gas: o.reports.envSource.gas || null } : null }
+      : { list: [], pick: null, envSource: null };
     return {
       name: String(o.name || ''), savedAt: o.savedAt || null, fluid: fluid,
       units: pick(o.units, ['field', 'metric'], 'field'),
       labMode: pick(o.labMode, ['none', 'one', 'several'], 'none'),
-      inputs: inputs, lab: lab, samples: samples
+      inputs: inputs, lab: lab, samples: samples, reports: reports
     };
   }
 

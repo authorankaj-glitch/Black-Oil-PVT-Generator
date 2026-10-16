@@ -16,6 +16,9 @@ var FS = require('../js/fluid-state.js');
 var TU = require('../js/tuning.js');
 var SM = require('../js/samples.js');
 var PJ = require('../js/project.js');
+var RP = require('../js/reports.js');
+var GR = require('../js/gas-reports.js');
+var EO = require('../js/eos.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -797,6 +800,86 @@ section('23. Project files and credits');
   }));
   var js = JSON.parse(E.generate(m, 'json', 'field'));
   ok('JSON export names the generator and its author', js.generator === 'Black-Oil PVT Generator' && /Ankaj Kumar Sinha/.test(js.copyright) && js.pb > 0);
+})();
+
+section('24. PVT reports: import, QC and the separator correction');
+(function () {
+  /* the built-in example reports: one sound study, one with planted faults */
+  var demo = RP.demoReports(M);
+  var q0 = RP.qcReport(demo[0]), q1 = RP.qcReport(demo[1]), q2 = RP.qcReport(demo[2]);
+  var st = function (q, k) { return q.checks.filter(function (c) { return c.key === k; })[0].status; };
+  ok('sound example reports pass every check', q0.status === 'pass' && q2.status === 'pass',
+     JSON.stringify(q0.checks.concat(q2.checks).filter(function (c) { return c.status !== 'pass'; }).map(function (c) { return c.key; })));
+  ok('the faulted report is caught: composition total, Y-function, DL density, viscosity, reported Pb',
+     st(q1, 'compSum') === 'fail' && st(q1, 'yFunc') !== 'pass' && st(q1, 'dlRho') !== 'pass' &&
+     st(q1, 'viscTrend') !== 'pass' && st(q1, 'pbAgree') !== 'pass');
+
+  /* Amyx et al.: Bo = Bod f, Rs = Rsfb - (Rsdb - Rsd) f, f = Bofb / Bodb */
+  var fin = RP.finalise(demo[0]);
+  var dl = demo[0].dl.rows.filter(function (r) { return r.p > 50; });
+  var top = dl[0], sep = RP.sepSummary(demo[0].sep.tests[0]), f = sep.bofb / top.bo;
+  var mid = dl[3], row = fin.rows.filter(function (r) { return r.p === mid.p; })[0];
+  near('separator correction of Bo (Amyx)', row.bo, mid.bo * f, 1e-9);
+  near('separator correction of Rs (Amyx)', row.rs, sep.rsfb - (top.rs - mid.rs) * f, 1e-9);
+  ok('finalised data is complete and on the separator basis', fin.ready && fin.fluid.rsb === sep.rsfb && fin.method === 'amyx');
+
+  /* a synthetic report as a spreadsheet saves it: rows padded with
+     separators, an inline comment, a quoted name */
+  var csv = [
+    '# synthetic test report,,,,,',
+    '[report],,,,,',
+    'name,"Test well 7, DST 1",,,,',
+    'sample type,bhs   # bhs = bottomhole, sep = separator,,,',
+    'reservoir temperature degF,190,,,,',
+    'reported bubble point psia,2000,,,,',
+    ',,,,,',
+    '[cce],,,,,',
+    'pressure psia,relative volume V/Vsat,,,,',
+    '3000,0.985,,,,',
+    '2050,0.9996,,,,',
+    '2000,1,,,,',
+    '1500,1.18,,,,',
+    '1000,1.55,,,,',
+    '[dl],,,,,',
+    'pressure psia,Rsd scf/bbl,Bod bbl/bbl,oil density g/cm3,gas z,gas gravity',
+    '2000,600,1.35,,,',
+    '1000,320,1.22,,0.9,0.75',
+    '14.7,0,1.06,,,1.3',
+    '[separator: 100 psig / 80 degF],,,,,',
+    'stock-tank oil gravity API,35,,,,',
+    'Bofb bbl/STB,1.31,,,,',
+    'stage pressure psia,stage temperature degF,stage GOR scf/STB,gas gravity,,',
+    '114.7,80,450,0.72,,',
+    '14.7,60,90,1.2,,'
+  ].join('\r\n');
+  var rep = RP.parseReportText(csv, 'x')[0];
+  ok('spreadsheet-padded CSV: sections, quoted name and inline comment read',
+     rep.name === 'Test well 7, DST 1' && rep.type === 'bhs' && rep.tempF === 190 && rep.cce.rows.length === 5 &&
+     rep.dl.rows.length === 3 && rep.sep.tests[0].stages.length === 2 && rep.sep.tests[0].bofb === 1.31, JSON.stringify(rep.sep));
+  ok('CCE bubble point is the reading at V/Vsat = 1, not one just above it', RP.ccePb(rep.cce.rows) === 2000, RP.ccePb(rep.cce.rows));
+  var eu = csv.split('\r\n').map(function (l) { return /^#/.test(l) ? l : l.replace(/,/g, ';').replace(/(\d)\.(\d)/g, '$1,$2'); }).join('\n');
+  var rep2 = RP.parseReportText(eu, 'x')[0];
+  ok('semicolon file with decimal commas reads the same', JSON.stringify(rep2.dl.rows) === JSON.stringify(rep.dl.rows) &&
+     rep2.sep.tests[0].bofb === 1.31);
+  ok('the page templates import', RP.parseReportText(RP.TEMPLATE)[0].dl.rows.length > 0 && GR.parseReportText(GR.TEMPLATE)[0].cce.rows.length > 0 &&
+     GR.isGasText(GR.TEMPLATE) && !GR.isGasText(RP.TEMPLATE));
+  var threw = null; try { RP.parseReportText('a,b\n1,2'); } catch (e) { threw = e.message; }
+  ok('a file with no sections is refused', /No PVT data/.test(threw || ''));
+
+  /* gas reports */
+  var gd = GR.demoReports(), gq = gd.map(function (r) { return GR.qcReport(r); });
+  ok('gas examples: sound wet and dry gas pass, the faulted one fails', gq[0].status === 'pass' && gq[2].status === 'pass' && gq[1].status === 'fail');
+  ok('gas type from the CGR', GR.finalise(gd[0]).gasKind === 'wet' && GR.finalise(gd[2]).gasKind === 'dry');
+
+  /* equation of state: a light oil has a bubble point, a lean gas none at Tres */
+  var oil = EO.mixture({ rows: [{ c: 'C1', z: 40 }, { c: 'C2', z: 8 }, { c: 'C3', z: 6 }, { c: 'nC4', z: 4 }, { c: 'C6', z: 4 }, { c: 'C7+', z: 38 }], mw7: 210, sg7: 0.86 });
+  var sp = EO.satPressure(oil, 190, 12000);
+  ok('Peng-Robinson bubble point of a black oil is a bubble point in a sound range', sp && sp.kind === 'bubble' && sp.p > 800 && sp.p < 6000, JSON.stringify(sp));
+  var m = EO.matchPb({ rows: oil.comps.filter(function (c) { return !c.plus; }).map(function (c) { return { c: c.c, z: c.z * 100 }; }).concat([{ c: 'C7+', z: 38 }]), mw7: 210, sg7: 0.86 }, 190, sp.p * 1.1);
+  ok('the C1-C7+ interaction brings the bubble point to a target', m && m.matched && Math.abs(m.pb / (sp.p * 1.1) - 1) < 0.01, JSON.stringify(m));
+
+  var pk = PJ.unpack(JSON.stringify(PJ.pack({ inputs: { oil: { inputs: { fluid: 'oil' } } }, reports: { list: [rep], pick: rep.id } })));
+  ok('project files carry the reports', pk.reports.list.length === 1 && pk.reports.pick === rep.id);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

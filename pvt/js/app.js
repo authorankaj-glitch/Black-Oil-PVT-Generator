@@ -410,8 +410,68 @@
     st.className = 'state-chip' + (twoPhase && !atSat ? ' two-phase' : '');
   }
 
+  /* ---------- phase envelope: schematic, or from a report's composition ---------- */
+  var Eos = window.PVTEos;
+  var envSource = { oil: null, gas: null };       /* report id per fluid; null = schematic */
+  var eosEnvCache = {}, eosPending = null;
+  function restoreEnvSource() {
+    try {
+      var o = JSON.parse(localStorage.getItem('pvt.envSource'));
+      if (o) envSource = { oil: o.oil || null, gas: o.gas || null };
+    } catch (e) { /* ignore */ }
+  }
+  function setEnvSource(id) {
+    envSource[fluid] = id || null;
+    try { localStorage.setItem('pvt.envSource', JSON.stringify(envSource)); } catch (e) { /* ignore */ }
+  }
+  /* reports of this fluid with a composition the EOS can use */
+  function envReports() {
+    if (!Eos || typeof fluidReports !== 'function') return [];
+    return fluidReports().filter(function (r) { return !!repApi(r).eosComposition(r); });
+  }
+  function eosKey(m, comp) {
+    var inp = m.input;
+    return JSON.stringify([m.fluid, comp, inp.tempF, m.fluid === 'oil' ? Math.round(m.pb) : [inp.pSepPsia, inp.tSepF]]);
+  }
+  /* The computed envelope for the model, null for the schematic, or
+     undefined while it is being computed (a few hundred ms). */
+  function eosEnvelope(m) {
+    var rep = envSource[m.fluid] && repById(envSource[m.fluid]);
+    if (!rep || (rep.fluid || 'oil') !== m.fluid) return null;
+    var comp = repApi(rep).eosComposition(rep);
+    if (!comp) return null;
+    var key = eosKey(m, comp);
+    if (key in eosEnvCache) return eosEnvCache[key];
+    if (eosPending !== key) {
+      eosPending = key;
+      setTimeout(function () {
+        var env = null;
+        try { env = computeEosEnvelope(m, comp, rep.name); } catch (e) { env = null; }
+        eosEnvCache[key] = env;
+        eosPending = null;
+        if (model === m) renderVisuals();
+      }, 30);
+    }
+    return undefined;
+  }
+  function computeEosEnvelope(m, comp, name) {
+    var inp = m.input, t = inp.tempF;
+    if (m.fluid === 'oil') {
+      var mt = Eos.matchPb(comp, t, m.pb) || { kPlus: undefined, matched: false };
+      var mix = Eos.mixture(Object.assign({}, comp, mt.kPlus !== undefined ? { kPlus: mt.kPlus } : {}));
+      var e = mix && Eos.envelope(mix, { tMin: 0, pMax: 12000 });
+      return e ? FS.fromEos(m, e, { source: name, kPlus: mt.kPlus, pbBase: mt.pbBase, pbEos: mt.pb, matched: mt.matched }) : null;
+    }
+    var mg = Eos.mixture(comp);
+    var eg = mg && Eos.envelope(mg, { pMax: 10000, levels: [0.1, 0.05, 0.02] });
+    if (!eg) return null;
+    var dew = t < eg.tct ? Eos.satPressure(mg, t, 10000) : null;
+    return FS.fromEos(m, eg, { source: name, sepInside: Eos.twoPhase(mg, inp.tSepF, inp.pSepPsia), dew: dew ? dew.p : null });
+  }
+
   function renderVisuals() {
-    envelope = FS.phaseEnvelope(model);
+    var eosEnv = eosEnvelope(model);
+    envelope = eosEnv || FS.phaseEnvelope(model);
     var r = pRange();
     var host = $('fluidVisuals');
     host.textContent = '';
@@ -432,6 +492,24 @@
 
     var pHost = document.createElement('div');
     host.appendChild(pHost);
+    var srcs = envReports(), envBar = null;
+    if (srcs.length) {
+      var bar = document.createElement('div');
+      bar.className = 'phase-source';
+      var lb = document.createElement('label'); lb.htmlFor = 'envSourceSel'; lb.textContent = 'Phase envelope';
+      var sel = document.createElement('select'); sel.id = 'envSourceSel';
+      var o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Schematic (no composition)'; sel.appendChild(o0);
+      srcs.forEach(function (r2) { var op = document.createElement('option'); op.value = r2.id; op.textContent = 'From the composition of ' + r2.name; sel.appendChild(op); });
+      sel.value = srcs.some(function (r2) { return r2.id === envSource[fluid]; }) ? envSource[fluid] : '';
+      sel.addEventListener('change', function () { setEnvSource(sel.value); renderVisuals(); });
+      bar.appendChild(lb); bar.appendChild(sel);
+      if (eosEnv === undefined) {
+        var w = document.createElement('span'); w.className = 'hint'; w.setAttribute('role', 'status');
+        w.textContent = 'Computing the envelope from the composition…';
+        bar.appendChild(w);
+      }
+      envBar = bar;
+    }
     phase = Vis.createPhaseDiagram(pHost, {
       env: envelope, state: state, fmt: fmt, label: label,
       atBubblePoint: atSaturation, atSat: atSaturation,
@@ -444,6 +522,8 @@
       pMinTable: r.lo, pMaxTable: r.hi,
       onPressure: function (p) { setCursor(p, 'phase'); }
     });
+    /* the envelope chooser sits under the card title */
+    if (envBar) pHost.insertBefore(envBar, pHost.children[1] || null);
 
     var keep = cursorP !== null && cursorP >= r.lo && cursorP <= r.hi ? cursorP
       : (model.psat > 0 ? model.psat : r.hi);
@@ -1540,7 +1620,8 @@
     if (!back) { try { back = JSON.parse(localStorage.getItem('pvt.inputs.' + other)); } catch (e) { back = null; } }
     inputs[other] = back && back.inputs ? back : null;
     return { name: $('projectName').value, fluid: fluid, units: units, labMode: labMode,
-             inputs: inputs, lab: lab, samples: samples };
+             inputs: inputs, lab: lab, samples: samples,
+             reports: { list: reports.list, pick: reports.pick, envSource: envSource } };
   }
 
   function projectSay(text) { $('projectStatus').textContent = text; }
@@ -1574,6 +1655,8 @@
         localStorage.setItem('pvt.labMode', p.labMode);
         localStorage.setItem('pvt.lab', JSON.stringify(p.lab && p.lab.oil && p.lab.gas ? p.lab : { oil: emptyLab(), gas: emptyLab() }));
         localStorage.setItem('pvt.samples', JSON.stringify(p.samples));
+        localStorage.setItem('pvt.reports', JSON.stringify({ list: p.reports.list, pick: p.reports.pick }));
+        localStorage.setItem('pvt.envSource', JSON.stringify(p.reports.envSource || { oil: null, gas: null }));
         localStorage.setItem('pvt.projectName', p.name);
       } catch (e) {
         projectSay('This browser blocks the storage the page needs to open a project.');
@@ -2406,6 +2489,1189 @@
   }
 
   /* ================================================================ *
+   * PVT reports: raw laboratory tests, QC, corrections, finalised data
+   * ================================================================ */
+
+  var Rep = window.PVTReports, GRep = window.PVTGasReports;
+  var reports = { list: [], pick: null };
+  /* the module that owns a report: oil (reports.js) or gas (gas-reports.js) */
+  function repApi(rep) { return rep && rep.fluid === 'gas' && GRep ? GRep : Rep; }
+  function fluidApi() { return fluid === 'gas' && GRep ? GRep : Rep; }
+  /* the reports of the fluid on screen */
+  function fluidReports() { return reports.list.filter(function (r) { return (r.fluid || 'oil') === fluid; }); }
+  var openReport = {}, openTest = {};
+  var repQcCache = {};
+  var repTimer = null;
+
+  /* Which tests a report card shows, in the order a PVT report lists them. */
+  var TEST_DEFS = [
+    { key: 'comp', title: 'Composition', cols: 'comp' },
+    { key: 'cce', title: 'Constant composition expansion (CCE)', cols: 'cce' },
+    { key: 'dl', title: 'Differential liberation (DL)', cols: 'dl' },
+    { key: 'sep', title: 'Separator tests' },
+    { key: 'visc', title: 'Viscosity', cols: 'visc' }
+  ];
+  var REP_FIELDS = [
+    { k: 'tempF', kind: 'T', head: 'Reservoir temperature', get: function (r) { return r.tempF; }, set: function (r, v) { r.tempF = v; } },
+    { k: 'pbReported', kind: 'p', head: 'Reported bubble point', get: function (r) { return r.pbReported; }, set: function (r, v) { r.pbReported = v; } },
+    { k: 'pRes', kind: 'p', head: 'Reservoir pressure at sampling', get: function (r) { return r.sampling.pRes; }, set: function (r, v) { r.sampling.pRes = v; } },
+    { k: 'pwf', kind: 'p', head: 'Flowing pressure at sampling', bhsOnly: true, get: function (r) { return r.sampling.pwf; }, set: function (r, v) { r.sampling.pwf = v; } },
+    { k: 'gor', kind: 'rs', head: 'Producing GOR at sampling', get: function (r) { return r.sampling.gor; }, set: function (r, v) { r.sampling.gor = v; } },
+    { k: 'depth', kind: 'len', head: 'Sampling depth, TVD', bhsOnly: true, get: function (r) { return r.sampling.depth; }, set: function (r, v) { r.sampling.depth = v; } }
+  ];
+  /* Gas reports: well-stream composition, recombination, CCE, viscosity. */
+  var GAS_TEST_DEFS = [
+    { key: 'comp', title: 'Composition', cols: 'comp' },
+    { key: 'recomb', title: 'Separator and recombination' },
+    { key: 'cce', title: 'Constant composition expansion (CCE)', cols: 'cce' },
+    { key: 'visc', title: 'Gas viscosity', cols: 'visc' }
+  ];
+  var GAS_REP_FIELDS = [
+    REP_FIELDS[0],
+    { k: 'pRes', kind: 'p', head: 'Reservoir pressure at sampling', get: function (r) { return r.sampling.pRes; }, set: function (r, v) { r.sampling.pRes = v; } },
+    { k: 'cgrF', kind: 'cgr', head: 'Producing CGR at sampling', get: function (r) { return r.sampling.cgr; }, set: function (r, v) { r.sampling.cgr = v; } },
+    { k: 'depth', kind: 'len', head: 'Sampling depth, TVD', bhsOnly: true, get: function (r) { return r.sampling.depth; }, set: function (r, v) { r.sampling.depth = v; } }
+  ];
+  var GAS_TEST_SCALARS = {
+    recomb: [
+      { head: 'Separator pressure', kind: 'p', get: function (r) { return r.recomb.pSep; }, set: function (r, v) { r.recomb.pSep = v; } },
+      { head: 'Separator temperature', kind: 'T', get: function (r) { return r.recomb.tSep; }, set: function (r, v) { r.recomb.tSep = v; } },
+      { head: 'Separator gas gravity', unit: 'air = 1', get: function (r) { return r.recomb.gg; }, set: function (r, v) { r.recomb.gg = v; } },
+      { head: 'Condensate-gas ratio (recombination)', kind: 'cgr', get: function (r) { return r.recomb.cgr; }, set: function (r, v) { r.recomb.cgr = v; } },
+      { head: 'Condensate gravity', unit: 'API', get: function (r) { return r.recomb.api; }, set: function (r, v) { r.recomb.api = v; } }
+    ]
+  };
+  var GAS_TEST_HINTS = {
+    comp: 'Mole percent of the well stream, and of the separator gas and liquid it was recombined from (they drive the Hoffman equilibrium check). The well stream also places the fluid on its phase envelope.',
+    recomb: 'The conditions and ratio the laboratory recombined at. CGR in STB per MMscf of separator gas; 0 for a dry gas. The separator gas gravity and condensate API become the case inputs.',
+    cce: 'At reservoir temperature: gas z, relative volume V/V<sub>ref</sub> (any reference) and liquid dropout. Any liquid at reservoir temperature makes it a gas condensate.',
+    visc: 'Gas viscosity at reservoir temperature, measured or as the laboratory reports it.'
+  };
+  var TEST_SCALARS = {
+    comp: [{ head: 'C7+ molecular weight', unit: 'g/mol', get: function (r) { return r.comp.mw7; }, set: function (r, v) { r.comp.mw7 = v; } },
+           { head: 'C7+ specific gravity', unit: '60/60 °F', get: function (r) { return r.comp.sg7; }, set: function (r, v) { r.comp.sg7 = v; } }],
+    dl: [{ head: 'Residual oil gravity', unit: 'API at 60 °F', get: function (r) { return r.dl.apiResidual; }, set: function (r, v) { r.dl.apiResidual = v; } }],
+    visc: [{ head: 'Dead-oil viscosity at T<sub>res</sub>', kind: 'mu', get: function (r) { return r.visc.muod; }, set: function (r, v) { r.visc.muod = v; } }]
+  };
+  var TEST_HINTS = {
+    comp: 'Mole percent of the reservoir fluid, and of the separator gas and liquid when the report gives them (they drive the Hoffman equilibrium check). There is no Use column here: correct a wrong analysis rather than dropping a component.',
+    cce: 'Relative volume V/Vsat at reservoir temperature; 1 at the saturation pressure. Densities above P<sub>b</sub> are optional and check the volumes.',
+    dl: 'As reported: R<sub>sd</sub> in scf per barrel of residual oil, B<sub>od</sub> in barrels per barrel of residual oil, starting at P<sub>b</sub>. Gas gravity is that of the gas liberated at the stage.',
+    sep: 'One block per separator test. Stage GOR in scf per stock-tank barrel; the last stage is the stock tank. The test marked "Use" supplies R<sub>sfb</sub>, B<sub>ofb</sub>, the API and the gas gravity - pick the one matching the field separators.',
+    visc: 'Live-oil viscosity at reservoir temperature; gas viscosity is optional (usually calculated by the laboratory).'
+  };
+
+  function repColumns(rep, key) { return repApi(rep).COLS[key]; }
+  function testDefs(rep) { return rep && rep.fluid === 'gas' ? GAS_TEST_DEFS : TEST_DEFS; }
+  function repFields(rep) { return rep && rep.fluid === 'gas' ? GAS_REP_FIELDS : REP_FIELDS; }
+  function testScalars(rep, key) { return (rep && rep.fluid === 'gas' ? GAS_TEST_SCALARS : TEST_SCALARS)[key]; }
+  function testHint(rep, key) { return (rep && rep.fluid === 'gas' ? GAS_TEST_HINTS : TEST_HINTS)[key]; }
+  /* DL columns are per barrel of residual oil, not per stock-tank barrel */
+  function repUnit(col) {
+    var u = col.kind ? label(col.kind) : col.unit || '';
+    return col.resid ? u.replace('/STB', '/bbl') : u;
+  }
+  function repCellText(col, v) {
+    if (col.text) return v || '';
+    return v === null || v === undefined ? '' : trim(col.kind ? conv(col.kind, v) : v, col.kind);
+  }
+  function repCellValue(col, str) {
+    if (col.text) return String(str || '').trim().slice(0, 12);
+    return labCellValue(col, str);
+  }
+  function repById(id) { return reports.list.filter(function (r) { return r.id === id; })[0] || null; }
+  function pickedReport() {
+    var r = repById(reports.pick);
+    return r && (r.fluid || 'oil') === fluid ? r : fluidReports()[0] || null;
+  }
+
+  function reportQc(rep) {
+    var key = JSON.stringify(rep);
+    var c = repQcCache[rep.id];
+    if (c && c.key === key) return c.q;
+    var q;
+    try { q = repApi(rep).qcReport(rep); } catch (e) { q = { checks: [], flags: [], status: 'fail', error: e.message, final: { rows: [], notes: [e.message] } }; }
+    repQcCache[rep.id] = { key: key, q: q };
+    return q;
+  }
+
+  function persistReports() {
+    try { localStorage.setItem('pvt.reports', JSON.stringify(reports)); } catch (e) { /* ignore */ }
+  }
+  function restoreReports() {
+    try {
+      var o = JSON.parse(localStorage.getItem('pvt.reports'));
+      if (o && Array.isArray(o.list)) {
+        reports.list = o.list.map(function (x) { return repApi(x).cleanReport(x); });
+        reports.pick = o.pick || null;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  /* Edits repaint the checks after a short pause; structural changes
+     (rows added or removed, a report added) rebuild the cards. */
+  function reportsChanged(rebuild) {
+    persistReports();
+    if (rebuild) renderReportList();
+    clearTimeout(repTimer);
+    repTimer = setTimeout(function () { paintReportStatus(); renderReportDetail(); }, 220);
+  }
+
+  /* ---------- the tab and its visibility ---------- */
+
+  function applyReportsTab() {
+    var tab = $('tab-reports');
+    if (!tab) return;
+    var hide = effectiveMode() === 'none';
+    tab.hidden = hide;
+    if (hide && tab.getAttribute('aria-selected') === 'true') $('tab-summary').click();
+  }
+
+  /* ---------- report list and cards ---------- */
+
+  /* The step texts of the tab, for the fluid on screen. */
+  var REP_STEP_HINTS = {
+    gas: {
+      repHintTests: 'Enter each gas PVT report as it was issued &mdash; well-stream, separator gas and separator liquid compositions, the separator conditions and CGR of the recombination, the CCE at reservoir temperature and the gas viscosities &mdash; in the units the page shows. Paste a block from a spreadsheet into any cell, or import report files (download the gas template for the layout).',
+      repHintCheck: 'Each report is checked for consistency: the composition and its C7+, the separator gas gravity and the Hoffman plot, the well-stream gravity against the recombination, the laboratory CGR against the producing CGR, the phase envelope of the composition (cricondentherm against reservoir temperature, separator inside or outside), liquid dropout, z against the composition, p&middot;V/z along the CCE and the viscosity against Lee-Gonzalez-Eakin.',
+      repHintFinal: 'What the tuning will see: z and gas viscosity against pressure, with the separator gas gravity, CGR, condensate API, separator conditions and CO<sub>2</sub>/H<sub>2</sub>S/N<sub>2</sub> for the case inputs. Accept the report when you are satisfied with it.'
+    },
+    oil: {}
+  };
+  function applyReportStepHints() {
+    Object.keys(REP_STEP_HINTS.gas).forEach(function (id) {
+      var e = $(id);
+      if (!e) return;
+      if (!(id in REP_STEP_HINTS.oil)) REP_STEP_HINTS.oil[id] = e.innerHTML;
+      e.innerHTML = REP_STEP_HINTS[fluid === 'gas' ? 'gas' : 'oil'][id];
+    });
+  }
+
+  function renderReportList() {
+    var host = $('reportList');
+    if (!host) return;
+    applyReportStepHints();
+    host.textContent = '';
+    var mine = fluidReports();
+    if (!mine.length) {
+      var p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'No ' + (fluid === 'gas' ? 'gas' : 'oil') + ' reports yet. Add one and type or paste its tests, import report files (CSV, one per report - download the template for the layout), or load the example reports.';
+      host.appendChild(p);
+    }
+    mine.forEach(function (r) { host.appendChild(reportCard(r)); });
+    paintReportStatus();
+    renderReportDetail();
+  }
+
+  function reportCard(rep) {
+    var d = document.createElement('details');
+    d.className = 'sample-card report-card';
+    d.dataset.rep = rep.id;
+    if (openReport[rep.id]) d.open = true;
+    d.addEventListener('toggle', function () { openReport[rep.id] = d.open; });
+
+    var sum = document.createElement('summary');
+    var dot = document.createElement('span'); dot.className = 'qc-dot na rep-dot'; dot.textContent = '–';
+    var nm = document.createElement('span'); nm.className = 'sample-name'; nm.textContent = rep.name;
+    var meta = document.createElement('span'); meta.className = 'sample-meta rep-meta';
+    var badge = document.createElement('span'); badge.className = 'rep-final-badge'; badge.textContent = 'Ready for tuning';
+    sum.appendChild(dot); sum.appendChild(nm); sum.appendChild(meta); sum.appendChild(badge);
+    d.appendChild(sum);
+
+    var body = document.createElement('div');
+    body.className = 'sample-body';
+    var top = document.createElement('div');
+    top.className = 'sample-top';
+    var fName = document.createElement('div'); fName.className = 'field';
+    var lName = document.createElement('label'); lName.textContent = 'Report name';
+    var inName = document.createElement('input'); inName.type = 'text'; inName.maxLength = 80; inName.value = rep.name;
+    lName.htmlFor = inName.id = 'rn-' + rep.id;
+    inName.addEventListener('input', function () { rep.name = inName.value || 'PVT report'; nm.textContent = rep.name; reportsChanged(); });
+    fName.appendChild(lName); fName.appendChild(inName);
+    var fType = document.createElement('div'); fType.className = 'field';
+    var lType = document.createElement('label'); lType.textContent = 'Sample type';
+    var selType = document.createElement('select');
+    lType.htmlFor = selType.id = 'rt-' + rep.id;
+    (rep.fluid === 'gas' ? [['sep', 'Separator recombination'], ['bhs', 'Downhole']] : [['bhs', 'Bottomhole'], ['sep', 'Separator recombination']]).forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; selType.appendChild(op);
+    });
+    selType.value = rep.type;
+    selType.addEventListener('change', function () {
+      rep.type = selType.value;
+      body.querySelectorAll('.bhs-only').forEach(function (e) { e.hidden = rep.type !== 'bhs'; });
+      reportsChanged();
+    });
+    fType.appendChild(lType); fType.appendChild(selType);
+    top.appendChild(fName); top.appendChild(fType);
+    body.appendChild(top);
+
+    var sc = document.createElement('div');
+    sc.className = 'sample-scalars';
+    repFields(rep).forEach(function (f) {
+      sc.appendChild(scalarField(rep, f.head, f.kind, f.unit, f.get, f.set, f.bhsOnly));
+    });
+    body.appendChild(sc);
+
+    testDefs(rep).forEach(function (t) { body.appendChild(testBlock(rep, t)); });
+
+    var acts = document.createElement('div');
+    acts.className = 'export-bar';
+    acts.style.marginTop = '10px';
+    var chk = document.createElement('button');
+    chk.type = 'button'; chk.textContent = 'Check this report';
+    chk.addEventListener('click', function () {
+      reports.pick = rep.id; persistReports(); renderReportDetail();
+      var h = $('repStepCheck'); if (h && h.scrollIntoView) h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    var dup = document.createElement('button');
+    dup.type = 'button'; dup.className = 'ghost'; dup.textContent = 'Duplicate';
+    dup.addEventListener('click', function () {
+      var c = repApi(rep).cleanReport(JSON.parse(JSON.stringify(rep)));
+      c.id = repApi(rep).emptyReport().id; c.name = rep.name + ' (copy)'; c.final = false;
+      reports.list.splice(reports.list.indexOf(rep) + 1, 0, c);
+      openReport[c.id] = true;
+      reportsChanged(true);
+    });
+    var del = document.createElement('button');
+    del.type = 'button'; del.className = 'ghost danger'; del.textContent = 'Remove report';
+    del.addEventListener('click', function () {
+      reports.list = reports.list.filter(function (x) { return x.id !== rep.id; });
+      if (reports.pick === rep.id) reports.pick = null;
+      reportsChanged(true);
+    });
+    acts.appendChild(chk); acts.appendChild(dup); acts.appendChild(del);
+    body.appendChild(acts);
+    d.appendChild(body);
+    return d;
+  }
+
+  /* One labelled number input bound to a report value (field units inside). */
+  function scalarField(rep, head, kind, unit, get, set, bhsOnly) {
+    var f = document.createElement('div');
+    f.className = 'field' + (bhsOnly ? ' bhs-only' : '');
+    if (bhsOnly) f.hidden = rep.type !== 'bhs';
+    var lb = document.createElement('label');
+    lb.innerHTML = head + ' <span class="unit">' + (kind ? label(kind) : unit || '') + '</span>';
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.inputMode = 'decimal'; inp.placeholder = '—';
+    inp.id = 'rs-' + rep.id + '-' + Math.random().toString(36).slice(2, 8);
+    lb.htmlFor = inp.id;
+    var v = get(rep);
+    inp.value = v === null || v === undefined ? '' : trim(kind ? conv(kind, v) : v, kind);
+    inp.addEventListener('input', function () { set(rep, labCellValue({ kind: kind }, inp.value)); reportsChanged(); });
+    f.appendChild(lb); f.appendChild(inp);
+    return f;
+  }
+
+  function testCount(rep, key) {
+    if (key === 'comp') return rep.comp.rows.filter(function (q) { return q.z !== null || q.y !== null || q.x !== null; }).length;
+    if (key === 'sep') return rep.sep.tests.filter(function (t) { return t.stages.some(function (s) { return s.gor !== null; }); }).length;
+    if (key === 'recomb') return ['pSep', 'tSep', 'gg', 'cgr', 'api'].filter(function (k) { return rep.recomb[k] !== null; }).length;
+    return rep[key].rows.filter(function (q) { return q.p !== null; }).length;
+  }
+  function testMeta(rep, key) {
+    var n = testCount(rep, key);
+    if (!n) return 'not entered';
+    if (key === 'comp') return n + ' components';
+    if (key === 'sep') return n + (n > 1 ? ' tests' : ' test');
+    if (key === 'recomb') return n + ' of 5 values';
+    return n + (n > 1 ? ' pressures' : ' pressure');
+  }
+
+  function testBlock(rep, t) {
+    var d = document.createElement('details');
+    d.className = 'test-block';
+    d.dataset.test = t.key;
+    var oid = rep.id + ':' + t.key;
+    if (openTest[oid]) d.open = true;
+    d.addEventListener('toggle', function () { openTest[oid] = d.open; });
+    var s = document.createElement('summary');
+    var h = document.createElement('span'); h.className = 'test-title'; h.textContent = t.title;
+    var m = document.createElement('span'); m.className = 'sample-meta test-meta'; m.textContent = testMeta(rep, t.key);
+    var dot = document.createElement('span'); dot.className = 'qc-dot na test-dot'; dot.textContent = '–';
+    s.appendChild(dot); s.appendChild(h); s.appendChild(m);
+    d.appendChild(s);
+    var body = document.createElement('div');
+    body.className = 'test-body';
+    var hint = document.createElement('p'); hint.className = 'hint'; hint.innerHTML = testHint(rep, t.key);
+    body.appendChild(hint);
+    var scal = testScalars(rep, t.key) || (rep.fluid === 'gas' && t.key === 'comp' ? TEST_SCALARS.comp : null);
+    if (scal) {
+      var sc = document.createElement('div'); sc.className = 'sample-scalars';
+      scal.forEach(function (f) { sc.appendChild(scalarField(rep, f.head, f.kind, f.unit, f.get, f.set)); });
+      body.appendChild(sc);
+    }
+    if (t.key === 'sep') body.appendChild(sepEditor(rep));
+    else if (t.cols) body.appendChild(gridEditor(rep, t.key, rep[t.key].rows, repColumns(rep, t.cols), { use: t.key !== 'comp', fixed: t.key === 'comp' }));
+    d.appendChild(body);
+    return d;
+  }
+
+  /* Separator tests: one block per test, a radio picks the one in use. */
+  function sepEditor(rep) {
+    var wrap = document.createElement('div');
+    rep.sep.tests.forEach(function (t, i) {
+      var box = document.createElement('div');
+      box.className = 'sep-test';
+      var head = document.createElement('div');
+      head.className = 'sep-head';
+      var rl = document.createElement('label'); rl.className = 'sep-use';
+      var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'sepPick-' + rep.id; rb.checked = rep.sep.pick === i;
+      rb.addEventListener('change', function () { if (rb.checked) { rep.sep.pick = i; reportsChanged(); } });
+      rl.appendChild(rb); rl.appendChild(document.createTextNode(' Use'));
+      var nmI = document.createElement('input'); nmI.type = 'text'; nmI.value = t.name; nmI.maxLength = 60;
+      nmI.setAttribute('aria-label', 'Separator test name');
+      nmI.addEventListener('input', function () { t.name = nmI.value || 'Test ' + (i + 1); reportsChanged(); });
+      head.appendChild(rl); head.appendChild(nmI);
+      if (rep.sep.tests.length > 1) {
+        var rm = document.createElement('button'); rm.type = 'button'; rm.className = 'ghost danger'; rm.textContent = 'Remove test';
+        rm.addEventListener('click', function () {
+          rep.sep.tests.splice(i, 1);
+          rep.sep.pick = Math.min(rep.sep.pick > i ? rep.sep.pick - 1 : rep.sep.pick, rep.sep.tests.length - 1);
+          reportsChanged(true);
+        });
+        head.appendChild(rm);
+      }
+      box.appendChild(head);
+      var sc = document.createElement('div'); sc.className = 'sample-scalars';
+      sc.appendChild(scalarField(rep, 'Stock-tank oil gravity', null, 'API', function () { return t.api; }, function (r, v) { t.api = v; }));
+      sc.appendChild(scalarField(rep, 'B<sub>ofb</sub>', 'bo', null, function () { return t.bofb; }, function (r, v) { t.bofb = v; }));
+      box.appendChild(sc);
+      box.appendChild(gridEditor(rep, 'sep', t.stages, repColumns(rep, 'stage'), { use: false, sepIndex: i, minRows: 2 }));
+      wrap.appendChild(box);
+    });
+    var add = document.createElement('button');
+    add.type = 'button'; add.textContent = 'Add separator test';
+    add.addEventListener('click', function () {
+      rep.sep.tests.push(Rep.emptySepTest('Test ' + (rep.sep.tests.length + 1)));
+      openTest[rep.id + ':sep'] = true;
+      reportsChanged(true);
+    });
+    wrap.appendChild(add);
+    return wrap;
+  }
+
+  /* An editable table bound to an array of row objects. Paste a block from
+     a spreadsheet into any cell; header and unit rows are skipped. */
+  function gridEditor(rep, test, rows, cols, opts) {
+    var w = document.createElement('div');
+    w.className = 'table-wrap lab-wrap rep-wrap';
+    var tbl = document.createElement('table');
+    tbl.className = 'lab-table rep-table';
+    tbl.dataset.rep = rep.id; tbl.dataset.test = test;
+    if (opts.sepIndex !== undefined) tbl.dataset.sep = opts.sepIndex;
+    var newRow = function () { var o = {}; cols.forEach(function (c) { o[c.k] = null; }); if (opts.use) o.use = true; return o; };
+    var paint = function () {
+      if (!opts.fixed) while (rows.length < (opts.minRows || 3)) rows.push(newRow());
+      tbl.textContent = '';
+      var th = document.createElement('thead'), hr = document.createElement('tr');
+      if (opts.use) { var hu = document.createElement('th'); hu.textContent = 'Use'; hu.title = 'Untick to leave the row out of every check and the finalised data'; hr.appendChild(hu); }
+      cols.forEach(function (c) {
+        var h = document.createElement('th');
+        var u = repUnit(c);
+        h.textContent = c.head + (u ? ' (' + u + ')' : '');
+        hr.appendChild(h);
+      });
+      ['', ''].forEach(function () { hr.appendChild(document.createElement('th')); });
+      th.appendChild(hr); tbl.appendChild(th);
+      var tb = document.createElement('tbody');
+      rows.forEach(function (r, i) {
+        var tr = document.createElement('tr');
+        tr.dataset.row = i;
+        if (opts.use) {
+          var tu = document.createElement('td');
+          var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = r.use !== false;
+          cb.setAttribute('aria-label', 'Use row ' + (i + 1));
+          cb.addEventListener('change', function () { r.use = cb.checked; tr.classList.toggle('is-out', !cb.checked); reportsChanged(); });
+          tu.appendChild(cb); tr.appendChild(tu);
+          if (r.use === false) tr.classList.add('is-out');
+        }
+        cols.forEach(function (c, j) {
+          var td = document.createElement('td');
+          var inp = document.createElement('input');
+          inp.type = 'text';
+          if (!c.text) inp.inputMode = 'decimal'; else inp.className = 'rep-text';
+          inp.value = repCellText(c, r[c.k]);
+          inp.setAttribute('aria-label', c.head + ', row ' + (i + 1));
+          inp.addEventListener('input', function () {
+            r[c.k] = repCellValue(c, inp.value);
+            if (c.text) r[c.k] = Rep.normComp(r[c.k]) || r[c.k];
+            reportsChanged();
+          });
+          inp.addEventListener('paste', function (ev) {
+            var text = (ev.clipboardData || window.clipboardData).getData('text');
+            if (!/[\t\n]/.test(text)) return;
+            ev.preventDefault();
+            pasteRows(rows, cols, i, j, text, newRow, opts.fixed);
+            paint(); reportsChanged(); refreshTestMeta(rep);
+          });
+          td.appendChild(inp); tr.appendChild(td);
+        });
+        var fl = document.createElement('td'); fl.className = 'rep-flag'; tr.appendChild(fl);
+        var dl = document.createElement('td');
+        if (!opts.fixed) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.className = 'ghost lab-del'; b.textContent = '✕';
+          b.setAttribute('aria-label', 'Delete row ' + (i + 1));
+          b.addEventListener('click', function () { rows.splice(i, 1); paint(); reportsChanged(); refreshTestMeta(rep); });
+          dl.appendChild(b);
+        }
+        tr.appendChild(dl);
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+    };
+    paint();
+    w.appendChild(tbl);
+    var bar = document.createElement('div');
+    bar.className = 'export-bar lab-actions';
+    if (!opts.fixed) {
+      var add = document.createElement('button');
+      add.type = 'button'; add.textContent = 'Add row';
+      add.addEventListener('click', function () { rows.push(newRow()); paint(); });
+      bar.appendChild(add);
+    }
+    var clr = document.createElement('button');
+    clr.type = 'button'; clr.className = 'ghost'; clr.textContent = 'Clear table';
+    clr.addEventListener('click', function () {
+      if (opts.fixed) rows.forEach(function (r) { cols.forEach(function (c) { if (!c.text) r[c.k] = null; }); });
+      else rows.length = 0;
+      paint(); reportsChanged(); refreshTestMeta(rep);
+    });
+    bar.appendChild(clr);
+    var outer = document.createElement('div');
+    outer.appendChild(w); outer.appendChild(bar);
+    return outer;
+  }
+
+  function pasteRows(rows, cols, r0, c0, text, newRow, fixed) {
+    var lines = text.replace(/\r/g, '').split('\n').filter(function (l) { return l.trim() !== ''; });
+    var r = r0;
+    lines.forEach(function (line) {
+      var cells = line.split('\t');
+      if (cells.length === 1) cells = line.split(/[;,]\s*/);
+      var first = cols[c0] || cols[0];
+      if (first.text) {
+        /* composition: match the component by name, wherever it sits */
+        var c = Rep.normComp(cells[0]);
+        if (!c) return;
+        var hit = rows.filter(function (q) { return Rep.normComp(q.c) === c; })[0];
+        if (!hit) { if (fixed) return; hit = newRow(); hit.c = c; rows.push(hit); }
+        cells.slice(1).forEach(function (cell, j) { var col = cols[c0 + 1 + j]; if (col) hit[col.k] = repCellValue(col, cell); });
+        return;
+      }
+      if (repCellValue(first, cells[0]) === null) return;
+      while (rows.length <= r) rows.push(newRow());
+      cells.forEach(function (cell, j) { var col = cols[c0 + j]; if (col && !col.text) rows[r][col.k] = repCellValue(col, cell); });
+      r++;
+    });
+  }
+
+  function refreshTestMeta(rep) {
+    var card = document.querySelector('.report-card[data-rep="' + rep.id + '"]');
+    if (!card) return;
+    card.querySelectorAll('.test-block').forEach(function (b) {
+      b.querySelector('.test-meta').textContent = testMeta(rep, b.dataset.test);
+    });
+  }
+
+  /* Status dots on the cards and their tests, and flags on single rows. */
+  function paintReportStatus() {
+    fluidReports().forEach(function (rep) {
+      var card = document.querySelector('.report-card[data-rep="' + rep.id + '"]');
+      if (!card) return;
+      var q = reportQc(rep);
+      var dot = card.querySelector('.rep-dot');
+      dot.className = 'qc-dot rep-dot ' + q.status; dot.textContent = STATUS_GLYPH[q.status];
+      var nT = testDefs(rep).filter(function (t) { return testCount(rep, t.key); }).length;
+      var gas = rep.fluid === 'gas';
+      card.querySelector('.rep-meta').textContent = (rep.type === 'sep' ? 'Separator recombination' : gas ? 'Downhole' : 'Bottomhole') +
+        ', ' + nT + (nT === 1 ? ' test' : ' tests') +
+        (gas ? (q.final && q.final.ready ? ', ' + q.final.gasKind + ' gas' : '')
+             : (q.final && q.final.pb ? ', Pb ' + fmt('p', q.final.pb) + ' ' + label('p') : ''));
+      card.querySelector('.rep-final-badge').hidden = !rep.final;
+      refreshTestMeta(rep);
+      card.querySelectorAll('.test-block').forEach(function (b) {
+        var key = b.dataset.test;
+        var st = worstStatus(q.checks.filter(function (c) { return c.test === key || (key === 'dl' && c.test === 'pb'); })
+          .map(function (c) { return c.status; }));
+        var td = b.querySelector('.test-dot');
+        td.className = 'qc-dot test-dot ' + st; td.textContent = STATUS_GLYPH[st];
+      });
+      card.querySelectorAll('table.rep-table').forEach(function (t) {
+        t.querySelectorAll('tbody tr').forEach(function (tr) {
+          var f = (q.flags || []).filter(function (x) { return x.test === t.dataset.test && String(x.row) === tr.dataset.row; });
+          var cell = tr.querySelector('.rep-flag');
+          tr.classList.toggle('is-flagged', f.length > 0);
+          cell.textContent = f.length ? '!' : '';
+          cell.title = f.map(function (x) { return x.text; }).join(' ');
+        });
+      });
+    });
+  }
+  function worstStatus(list) {
+    var R = { na: 0, pass: 1, warn: 2, fail: 3 };
+    return list.reduce(function (a, s) { return R[s] > R[a] ? s : a; }, 'na');
+  }
+
+  /* ---------- step 2 and 3: checks, corrections, finalised data ---------- */
+
+  function renderReportDetail() {
+    var host = $('repDetail');
+    if (!host) return;
+    Object.keys(charts).forEach(function (k) { if (k.indexOf('rep-') === 0) delete charts[k]; });
+    host.textContent = '';
+    $('repFinal').textContent = '';
+    renderReportSend();
+    var rep = pickedReport();
+    if (!rep) {
+      var p = document.createElement('p'); p.className = 'hint';
+      p.textContent = 'Add or import a report to check it here.';
+      host.appendChild(p);
+      return;
+    }
+    reports.pick = rep.id;
+    var q = reportQc(rep);
+
+    /* report chooser */
+    if (fluidReports().length > 1) {
+      var chips = document.createElement('div');
+      chips.className = 'rep-chips';
+      fluidReports().forEach(function (r) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'chip' + (r.id === rep.id ? ' on' : '');
+        var st = reportQc(r).status;
+        var dd = document.createElement('span'); dd.className = 'qc-dot ' + st; dd.textContent = STATUS_GLYPH[st];
+        b.appendChild(dd); b.appendChild(document.createTextNode(' ' + r.name));
+        b.setAttribute('aria-pressed', String(r.id === rep.id));
+        b.addEventListener('click', function () { reports.pick = r.id; persistReports(); renderReportDetail(); });
+        chips.appendChild(b);
+      });
+      host.appendChild(chips);
+    }
+
+    /* corrections */
+    var set = document.createElement('div');
+    set.className = 'rep-settings';
+    if (rep.fluid === 'gas') {
+      var gb = document.createElement('div');
+      gb.className = 'rep-boxes';
+      gb.appendChild(settingCheck('Normalise the composition to 100 mol %', rep.settings.normalise, function (v) { rep.settings.normalise = v; }));
+      set.appendChild(gb);
+      host.appendChild(set);
+      if (q.error) host.appendChild(notice('error', '✕', 'The checks stopped: ' + q.error));
+      reportChecksAndCharts(host, rep, q);
+      return;
+    }
+    var cand = q.pbCandidates || {};
+    var pbOpt = [['cce', 'CCE saturation pressure', cand.cce], ['dl', 'First DL stage', cand.dl], ['report', 'Reported value', cand.report]]
+      .map(function (o) { return [o[0], o[1] + (o[2] ? ' (' + fmt('p', o[2]) + ' ' + label('p') + ')' : ' (none)')]; });
+    set.appendChild(settingSelect('Bubble point from', rep.settings.pbSource, pbOpt, function (v) { rep.settings.pbSource = v; }));
+    set.appendChild(settingSelect('DL to separator basis', rep.settings.method, [
+      ['amyx', 'Amyx et al.: Rs = Rsfb − (Rsdb − Rsd)·Bofb/Bodb'],
+      ['ratio', 'Ratio: Rs = Rsd·Rsfb/Rsdb'],
+      ['none', 'None: keep the DL values']], function (v) { rep.settings.method = v; }));
+    var sepOpt = rep.sep.tests.map(function (t, i) {
+      var s = Rep.sepSummary(t);
+      return [String(i), t.name + (s && s.bofb ? ' (Bofb ' + s.bofb.toFixed(4) + ', Rsfb ' + fmt('rs', s.rsfb) + ', ' + (s.api || '–') + ' API)' : '')];
+    });
+    set.appendChild(settingSelect('Separator test', String(rep.sep.pick), sepOpt, function (v) { rep.sep.pick = parseInt(v, 10); }));
+    var boxes = document.createElement('div');
+    boxes.className = 'rep-boxes';
+    boxes.appendChild(settingCheck('Smooth the undersaturated CCE volumes', rep.settings.smoothCce, function (v) { rep.settings.smoothCce = v; }));
+    boxes.appendChild(settingCheck('Normalise the composition to 100 mol %', rep.settings.normalise, function (v) { rep.settings.normalise = v; }));
+    set.appendChild(boxes);
+    host.appendChild(set);
+
+    if (q.error) host.appendChild(notice('error', '✕', 'The checks stopped: ' + q.error));
+    reportChecksAndCharts(host, rep, q);
+  }
+
+  function reportChecksAndCharts(host, rep, q) {
+    var h = document.createElement('h3');
+    h.className = 'screen-detail-head';
+    h.textContent = rep.name + ': ' + { pass: 'every check passes', warn: 'passes with warnings',
+      fail: 'fails - correct or untick the flagged rows', na: 'nothing to check yet' }[q.status];
+    host.appendChild(h);
+    renderCheckList(host, q.checks);
+    var nFlag = (q.flags || []).length;
+    if (nFlag) {
+      var fp = document.createElement('p'); fp.className = 'hint';
+      fp.textContent = nFlag + ' row' + (nFlag > 1 ? 's are' : ' is') + ' marked ! in the report tables above - hover the mark for the reason, then correct the value or untick the row.';
+      host.appendChild(fp);
+    }
+
+    var ph = document.createElement('p');
+    ph.className = 'hint rep-pick-hint';
+    ph.textContent = 'Click a reading on a chart to leave it out of the checks and the finalised data (it turns into a dashed ring); click it again to bring it back. The Use boxes in the tables do the same.';
+    host.appendChild(ph);
+    var grid = document.createElement('div');
+    grid.className = 'chart-grid samples-chart rep-charts';
+    host.appendChild(grid);
+    if (rep.fluid === 'gas') gasReportCharts(grid, rep, q); else reportCharts(grid, rep, q);
+
+    renderReportFinal(rep, q);
+  }
+
+  function settingSelect(text, value, options, onChange) {
+    var f = document.createElement('div'); f.className = 'field';
+    var lb = document.createElement('label'); lb.textContent = text;
+    var sel = document.createElement('select');
+    sel.id = 'rset-' + text.replace(/\W+/g, '');
+    lb.htmlFor = sel.id;
+    options.forEach(function (o) { var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; sel.appendChild(op); });
+    sel.value = value;
+    sel.addEventListener('change', function () { onChange(sel.value); persistReports(); paintReportStatus(); renderReportDetail(); });
+    f.appendChild(lb); f.appendChild(sel);
+    return f;
+  }
+  function settingCheck(text, value, onChange) {
+    var lb = document.createElement('label'); lb.className = 'switch';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!value;
+    cb.addEventListener('change', function () { onChange(cb.checked); persistReports(); paintReportStatus(); renderReportDetail(); });
+    lb.appendChild(cb); lb.appendChild(document.createTextNode(' ' + text));
+    return lb;
+  }
+
+  function pFmt(v) { return v.toFixed(uu('p').d); }
+  function repChart(grid, key, opts, rep) {
+    if (!opts.series.some(function (s) { return s.points.length; })) return;
+    opts.series.forEach(function (s) { s.points.sort(function (a, b) { return a.x - b.x; }); });
+    opts.fmtX = opts.fmtX || pFmt;
+    if (rep) {
+      opts.onPick = function (ref) { toggleReading(rep, ref); };
+      opts.pickHint = function (ref) {
+        var r = rep[ref.test] && rep[ref.test].rows[ref.row];
+        return r ? fmt('p', r.p) + ' ' + label('p') + ': click to ' + (r.use === false ? 'bring this reading back' : 'leave this reading out') : '';
+      };
+    }
+    chartInto(grid, 'rep-' + key, opts);
+  }
+
+  /* A reading clicked on a QC chart: flip its Use box. */
+  function toggleReading(rep, ref) {
+    var r = rep[ref.test] && rep[ref.test].rows[ref.row];
+    if (!r) return;
+    r.use = r.use === false;
+    persistReports();
+    renderReportList();
+    paintReportStatus();
+    renderReportDetail();
+  }
+  /* row index of a reading, matched by pressure (checks run on a copy) */
+  function rowAt(rep, test, p) {
+    var rows = rep[test].rows;
+    for (var i = 0; i < rows.length; i++) if (rows[i].p !== null && Math.abs(rows[i].p - p) < 1e-6) return i;
+    return -1;
+  }
+  function excludedRows(rep, test, has) {
+    return rep[test].rows.map(function (r, i) { return { r: r, i: i }; })
+      .filter(function (o) { return o.r.use === false && o.r.p !== null && has(o.r); });
+  }
+
+  /* The pictures an engineer looks at when checking a PVT report. */
+  function reportCharts(grid, rep, q) {
+    var P = function (p) { return conv('p', p); };
+    var pb = q.pb && q.pb.pb;
+    var marker = pb ? { x: P(pb), label: 'Pb' } : null;
+    /* Y-function */
+    var yf = q.yFunc;
+    if (yf && yf.fit) {
+      var xs = yf.pts.map(function (o) { return o.x; });
+      var lo = Math.min.apply(null, xs), hi = Math.max(Math.max.apply(null, xs), pb || 0);
+      repChart(grid, 'yfunc', {
+        title: 'CCE Y-function', subtitle: 'Y = (Pb − p) / [p (V/Vsat − 1)] should be a straight line below Pb',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Y (–)', marker: marker,
+        series: [
+          { name: 'Straight-line fit', slot: 1, points: [lo, hi].map(function (p) { return { x: P(p), y: yf.fit.a + yf.fit.b * p }; }) },
+          { name: 'CCE readings', slot: 1, scatter: true, points: yf.pts.filter(function (o) { return !o.bad; }).map(function (o) { return { x: P(o.x), y: o.y, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Off the line', slot: 8, scatter: true, points: yf.pts.filter(function (o) { return o.bad; }).map(function (o) { return { x: P(o.x), y: o.y, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'cce', function (r) {
+              return r.v !== null && r.v > 1 && r.p < (q.pbCandidates.cce || pb); }).map(function (o) {
+              var pbY = q.pbCandidates.cce || pb;
+              return { x: P(o.r.p), y: (pbY - o.r.p) / (o.r.p * (o.r.v - 1)), ref: { test: 'cce', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(3); }
+      }, rep);
+    }
+    /* undersaturated relative volume */
+    var us = q.undersat;
+    if (us && us.pts.length >= 2 && us.vAt) {
+      var hiU = us.pts.reduce(function (a, o) { return Math.max(a, o.p); }, 0), base = q.pbCandidates.cce || pb;
+      var grid1 = []; for (var k = 0; k <= 20; k++) grid1.push(base + (hiU - base) * k / 20);
+      repChart(grid, 'under', {
+        title: 'CCE above the bubble point', subtitle: 'Relative volume and its fitted compressibility curve',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'V/Vsat (–)',
+        series: [
+          { name: 'Fitted curve', slot: 1, points: grid1.map(function (p) { return { x: P(p), y: us.vAt(p) }; }) },
+          { name: 'CCE readings', slot: 1, scatter: true, points: us.pts.filter(function (o) { return !o.bad; }).map(function (o) { return { x: P(o.p), y: o.v, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Off the curve', slot: 8, scatter: true, points: us.pts.filter(function (o) { return o.bad; }).map(function (o) { return { x: P(o.p), y: o.v, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'cce', function (r) { return r.v !== null && r.p > base; })
+              .map(function (o) { return { x: P(o.r.p), y: o.r.v, ref: { test: 'cce', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(5); }
+      }, rep);
+    }
+    /* DL density mass balance */
+    var dn = q.density;
+    if (dn) {
+      var calc = dn.rows.filter(function (o) { return o.calc !== null; });
+      var meas = dn.rows.filter(function (o) { return o.meas !== null; });
+      if (calc.length > 1 && meas.length) {
+        /* the checks ran on a cleaned copy: match flagged stages by pressure */
+        var flaggedDl = (q.flags || []).filter(function (f) { return f.test === 'dl' && /Density/.test(f.text); })
+          .map(function (f) { return rep.dl.rows[f.row] && rep.dl.rows[f.row].p; });
+        repChart(grid, 'dlrho', {
+          title: 'DL oil density: measured against the mass balance', subtitle: 'Residual oil plus the gas still in solution, in Bod barrels',
+          xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Oil density (g/cm³)', marker: marker,
+          series: [
+            { name: 'Mass balance', slot: 1, points: calc.map(function (o) { return { x: P(o.p), y: o.calc }; }) },
+            { name: 'Measured', slot: 1, scatter: true, points: meas.filter(function (o) { return flaggedDl.indexOf(o.p) < 0; }).map(function (o) { return { x: P(o.p), y: o.meas, ref: { test: 'dl', row: rowAt(rep, 'dl', o.p) } }; }) },
+            { name: 'Flagged', slot: 8, scatter: true, points: meas.filter(function (o) { return flaggedDl.indexOf(o.p) >= 0; }).map(function (o) { return { x: P(o.p), y: o.meas, ref: { test: 'dl', row: rowAt(rep, 'dl', o.p) } }; }) },
+            { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'dl', function (r) { return r.rho !== null; })
+                .map(function (o) { return { x: P(o.r.p), y: o.r.rho, ref: { test: 'dl', row: o.i } }; }) }
+          ].filter(function (s) { return s.points.length; }),
+          fmtY: function (v) { return v.toFixed(4); }
+        }, rep);
+      }
+    }
+    /* DL against separator basis */
+    var fin = q.final;
+    var dlRows = rep.dl.rows.filter(function (r) { return r.use !== false && r.p !== null && r.rs !== null && r.bo !== null; })
+      .sort(function (a, b) { return b.p - a.p; });
+    var finSat = (fin.rows || []).filter(function (r) { return r.rs !== null && r.bo !== null; });
+    if (dlRows.length > 1 && finSat.length > 1) {
+      [['rs', 'Solution GOR: DL and separator basis', 'rs', 'Rsd (per bbl residual oil)', 'Rs, finalised'],
+       ['bo', 'Oil FVF: DL and separator basis', 'bo', 'Bod (per bbl residual oil)', 'Bo, finalised']].forEach(function (d) {
+        repChart(grid, 'basis-' + d[0], {
+          title: d[1], subtitle: fin.method === 'none' ? 'No correction applied' : 'Corrected with Bofb/Bodb = ' + fin.factor.toFixed(4),
+          xLabel: 'Pressure (' + label('p') + ')', yLabel: d[0] === 'rs' ? 'Rs (' + label('rs') + ')' : 'Bo (' + label('bo') + ')', marker: marker,
+          series: [
+            { name: d[3], slot: 7, dashed: true, points: dlRows.map(function (r) { return { x: P(r.p), y: conv(d[2], r[d[0]]) }; }) },
+            { name: d[4], slot: 1, points: finSat.map(function (r) { return { x: P(r.p), y: conv(d[2], r[d[0]]) }; }) },
+            { name: 'DL stages', slot: 7, scatter: true, legend: false, points: dlRows.map(function (r) { return { x: P(r.p), y: conv(d[2], r[d[0]]), ref: { test: 'dl', row: rep.dl.rows.indexOf(r) } }; }) },
+            { name: 'Left out', slot: 7, scatter: true, excluded: true, points: excludedRows(rep, 'dl', function (r) { return r[d[0]] !== null; })
+                .map(function (o) { return { x: P(o.r.p), y: conv(d[2], o.r[d[0]]), ref: { test: 'dl', row: o.i } }; }) }
+          ].filter(function (s) { return s.points.length; }),
+          fmtY: function (v) { return v.toFixed(d[0] === 'rs' ? uu('rs').d : 4); }
+        }, rep);
+      });
+    }
+    /* Hoffman */
+    var hf = q.hoffman;
+    if (hf && hf.fit) {
+      var fx = hf.pts.map(function (o) { return o.x; });
+      var f0 = Math.min.apply(null, fx), f1 = Math.max.apply(null, fx);
+      repChart(grid, 'hoffman', {
+        title: 'Hoffman plot of the separator samples', subtitle: 'log(K·p) against the characterisation factor F; one straight line at equilibrium',
+        xLabel: 'F (–)', yLabel: 'log₁₀(K·p), p in psia',
+        series: [
+          { name: 'Straight-line fit', slot: 1, points: [f0, f1].map(function (x) { return { x: x, y: hf.fit.a + hf.fit.b * x }; }) },
+          { name: 'Components', slot: 1, scatter: true, points: hf.pts.filter(function (o) { return !o.bad; }).map(function (o) { return { x: o.x, y: o.y }; }) },
+          { name: 'Off the line (' + hf.pts.filter(function (o) { return o.bad; }).map(function (o) { return o.c; }).join(', ') + ')', slot: 8, scatter: true,
+            points: hf.pts.filter(function (o) { return o.bad; }).map(function (o) { return { x: o.x, y: o.y }; }) },
+          { name: 'N2, CO2, H2S (not fitted)', slot: 1, scatter: true, excluded: true, points: (hf.inert || []).map(function (o) { return { x: o.x, y: o.y }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtX: function (v) { return v.toFixed(2); }, fmtY: function (v) { return v.toFixed(3); }
+      });
+    }
+    /* viscosity */
+    var vr = rep.visc.rows.filter(function (r) { return r.use !== false && r.p !== null && r.muo !== null; }).sort(function (a, b) { return b.p - a.p; });
+    if (vr.length > 1) {
+      var vFlag = (q.flags || []).filter(function (f) { return f.test === 'visc'; }).map(function (f) { return rep.visc.rows[f.row]; });
+      repChart(grid, 'visc', {
+        title: 'Oil viscosity', subtitle: 'Falls to a minimum at Pb, rises above it',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'μo (' + label('mu') + ')', marker: marker,
+        series: [
+          { name: 'Readings', slot: 1, points: vr.map(function (r) { return { x: P(r.p), y: r.muo }; }) },
+          { name: 'Readings', slot: 1, scatter: true, legend: false, points: vr.filter(function (r) { return vFlag.indexOf(r) < 0; }).map(function (r) { return { x: P(r.p), y: r.muo, ref: { test: 'visc', row: rep.visc.rows.indexOf(r) } }; }) },
+          { name: 'Flagged', slot: 8, scatter: true, points: vr.filter(function (r) { return vFlag.indexOf(r) >= 0; }).map(function (r) { return { x: P(r.p), y: r.muo, ref: { test: 'visc', row: rep.visc.rows.indexOf(r) } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'visc', function (r) { return r.muo !== null; })
+              .map(function (o) { return { x: P(o.r.p), y: o.r.muo, ref: { test: 'visc', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(3); }
+      }, rep);
+    }
+  }
+
+  /* The pictures for a gas report: z against the composition, the CCE
+     volumes against z, viscosity against Lee-Gonzalez-Eakin, the Hoffman
+     plot. Every measured reading can be clicked out or back in. */
+  function gasReportCharts(grid, rep, q) {
+    var P = function (p) { return conv('p', p); };
+    var flagged = function (test) { return (q.flags || []).filter(function (f) { return f.test === test; }).map(function (f) { return f.row; }); };
+    var cceFlag = flagged('cce'), viscFlag = flagged('visc');
+    var zp = (q.zPts || []).slice().sort(function (a, b) { return a.p - b.p; });
+    if (zp.length) {
+      var withC = zp.filter(function (o) { return o.zc !== null; });
+      var grid1 = [];
+      if (withC.length && q.analysis) {
+        var lo = zp[0].p, hi = zp[zp.length - 1].p, t = rep.tempF;
+        for (var k = 0; k <= 30; k++) { var pp = lo + (hi - lo) * k / 30; grid1.push({ x: P(pp), y: GRep.zFrom(q.analysis, t, pp) }); }
+      }
+      repChart(grid, 'gz', {
+        title: 'Gas z: measured and from the composition', subtitle: 'Kay pseudo-criticals with Kesler-Lee C7+, Wichert-Aziz, Dranchuk-Abou-Kassem',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'z (–)',
+        series: [
+          { name: 'From the composition', slot: 1, points: grid1 },
+          { name: 'Measured', slot: 1, scatter: true, points: zp.filter(function (o) { return cceFlag.indexOf(o.i) < 0; }).map(function (o) { return { x: P(o.p), y: o.z, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Flagged', slot: 8, scatter: true, points: zp.filter(function (o) { return cceFlag.indexOf(o.i) >= 0; }).map(function (o) { return { x: P(o.p), y: o.z, ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'cce', function (r) { return r.z !== null; })
+              .map(function (o) { return { x: P(o.r.p), y: o.r.z, ref: { test: 'cce', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(4); }
+      }, rep);
+    }
+    var zv = q.zv && q.zv.ref ? q.zv.ref : null;
+    var zvRows = rep.cce.rows.map(function (r, i) { return { r: r, i: i }; }).filter(function (o) { return o.r.p !== null && o.r.z !== null && o.r.v !== null && o.r.v > 0; });
+    if (zv && zvRows.length > 1) {
+      var used = zvRows.filter(function (o) { return o.r.use !== false; });
+      repChart(grid, 'gzv', {
+        title: 'CCE volumes against z', subtitle: 'p·V/z stays constant at constant temperature; each reading against the median of the others',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Difference (%)',
+        series: [
+          { name: 'Zero difference', slot: 7, dashed: true, points: [used[used.length - 1] || zvRows[0], used[0] || zvRows[zvRows.length - 1]].map(function (o) { return { x: P(o.r.p), y: 0 }; }) },
+          { name: 'Readings', slot: 1, scatter: true, points: used.filter(function (o) { return cceFlag.indexOf(o.i) < 0; }).map(function (o) { return { x: P(o.r.p), y: 100 * (o.r.p * o.r.v / o.r.z / zv - 1), ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Flagged', slot: 8, scatter: true, points: used.filter(function (o) { return cceFlag.indexOf(o.i) >= 0; }).map(function (o) { return { x: P(o.r.p), y: 100 * (o.r.p * o.r.v / o.r.z / zv - 1), ref: { test: 'cce', row: o.i } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: zvRows.filter(function (o) { return o.r.use === false; })
+              .map(function (o) { return { x: P(o.r.p), y: 100 * (o.r.p * o.r.v / o.r.z / zv - 1), ref: { test: 'cce', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(2) + ' %'; }
+      }, rep);
+    }
+    var vp = (q.vPts || []).slice().sort(function (a, b) { return a.p - b.p; });
+    if (vp.length > 1) {
+      repChart(grid, 'gmu', {
+        title: 'Gas viscosity', subtitle: 'Rises with pressure; the line is Lee-Gonzalez-Eakin at the measured z',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'μg (' + label('mu') + ')',
+        series: [
+          { name: 'Lee-Gonzalez-Eakin', slot: 1, points: vp.filter(function (o) { return o.lge !== null; }).map(function (o) { return { x: P(o.p), y: conv('mu', o.lge) }; }) },
+          { name: 'Measured', slot: 1, scatter: true, points: vp.filter(function (o) { return viscFlag.indexOf(o.i) < 0; }).map(function (o) { return { x: P(o.p), y: conv('mu', o.mug), ref: { test: 'visc', row: o.i } }; }) },
+          { name: 'Flagged', slot: 8, scatter: true, points: vp.filter(function (o) { return viscFlag.indexOf(o.i) >= 0; }).map(function (o) { return { x: P(o.p), y: conv('mu', o.mug), ref: { test: 'visc', row: o.i } }; }) },
+          { name: 'Left out', slot: 1, scatter: true, excluded: true, points: excludedRows(rep, 'visc', function (r) { return r.mug !== null; })
+              .map(function (o) { return { x: P(o.r.p), y: conv('mu', o.r.mug), ref: { test: 'visc', row: o.i } }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtY: function (v) { return v.toFixed(5); }
+      }, rep);
+    }
+    var hf = q.hoffman;
+    if (hf && hf.fit) {
+      var fx = hf.pts.map(function (o) { return o.x; });
+      var f0 = Math.min.apply(null, fx), f1 = Math.max.apply(null, fx);
+      repChart(grid, 'ghoff', {
+        title: 'Hoffman plot of the separator samples', subtitle: 'log(K·p) against the characterisation factor F; one straight line at equilibrium',
+        xLabel: 'F (–)', yLabel: 'log₁₀(K·p), p in psia',
+        series: [
+          { name: 'Straight-line fit', slot: 1, points: [f0, f1].map(function (x) { return { x: x, y: hf.fit.a + hf.fit.b * x }; }) },
+          { name: 'Hydrocarbons', slot: 1, scatter: true, points: hf.pts.filter(function (o) { return !o.bad; }).map(function (o) { return { x: o.x, y: o.y }; }) },
+          { name: 'Off the line', slot: 8, scatter: true, points: hf.pts.filter(function (o) { return o.bad; }).map(function (o) { return { x: o.x, y: o.y }; }) },
+          { name: 'N2, CO2, H2S (not fitted)', slot: 1, scatter: true, excluded: true, points: (hf.inert || []).map(function (o) { return { x: o.x, y: o.y }; }) }
+        ].filter(function (s) { return s.points.length; }),
+        fmtX: function (v) { return v.toFixed(2); }, fmtY: function (v) { return v.toFixed(3); }
+      });
+    }
+  }
+
+  /* Step 3: the finalised data set and the engineer's acceptance. */
+  function renderReportFinal(rep, q) {
+    var host = $('repFinal');
+    host.textContent = '';
+    var fin = q.final;
+    if (rep.fluid === 'gas') { renderGasReportFinal(host, rep, q, fin); return; }
+    var fl = fin.fluid || {};
+    var tiles = document.createElement('div');
+    tiles.className = 'tiles rep-tiles';
+    var v = function (x, f) { return x === null || x === undefined ? '–' : f(x); };
+    tile(tiles, 'Bubble point', v(fin.pb, function (x) { return fmt('p', x); }), label('p'));
+    tile(tiles, 'R<sub>sb</sub>', v(fl.rsb, function (x) { return fmt('rs', x); }), label('rs'));
+    tile(tiles, 'B<sub>ob</sub>', v(fin.bob, function (x) { return x.toFixed(4); }), label('bo'));
+    tile(tiles, 'Stock-tank oil', v(fl.api, function (x) { return x.toFixed(1); }), 'API');
+    tile(tiles, 'Gas gravity', v(fl.gammaG, function (x) { return x.toFixed(4); }), 'air = 1');
+    tile(tiles, 'Dead-oil viscosity', v(fin.muod, function (x) { return fmt('mu', x); }), label('mu'));
+    host.appendChild(tiles);
+    /* tile() writes its label as text; let the subscripts render */
+    tiles.querySelectorAll('.tile-label, .tile .label').forEach(function (e) { if (/&lt;sub&gt;|<sub>/.test(e.innerHTML)) e.innerHTML = e.textContent; });
+
+    (fin.notes || []).forEach(function (n) { host.appendChild(notice('info', 'i', n)); });
+
+    var wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    var tbl = document.createElement('table');
+    var cols = [['p', 'p', 'Pressure'], ['rs', 'rs', 'Rs'], ['bo', 'bo', 'Bo'], ['muo', 'mu', 'Oil viscosity'], ['z', null, 'Gas z'], ['mug', 'mu', 'Gas viscosity']];
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    cols.forEach(function (c) { var h = document.createElement('th'); h.textContent = c[2] + (c[1] ? ' (' + label(c[1]) + ')' : ''); hr.appendChild(h); });
+    ['Branch', 'From'].forEach(function (t) { var h = document.createElement('th'); h.textContent = t; hr.appendChild(h); });
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    (fin.rows || []).forEach(function (r) {
+      var tr = document.createElement('tr');
+      cols.forEach(function (c) {
+        var td = document.createElement('td');
+        var x = r[c[0]];
+        td.textContent = x === null || x === undefined ? '' : c[1] ? fmt(c[1], x) : x.toFixed(4);
+        tr.appendChild(td);
+      });
+      var b = document.createElement('td'); b.textContent = fin.pb && r.p > fin.pb * 1.001 ? 'undersaturated' : 'saturated'; tr.appendChild(b);
+      var s = document.createElement('td'); s.textContent = r.src; tr.appendChild(s);
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); wrap.appendChild(tbl);
+    host.appendChild(wrap);
+
+    var acc = document.createElement('label');
+    acc.className = 'switch rep-accept';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!rep.final; cb.disabled = !fin.ready;
+    cb.addEventListener('change', function () { rep.final = cb.checked; persistReports(); paintReportStatus(); renderReportSend(); });
+    acc.appendChild(cb);
+    acc.appendChild(document.createTextNode(' Accept the finalised data of ' + rep.name + ' for tuning'));
+    host.appendChild(acc);
+    if (!fin.ready) {
+      host.appendChild(notice('warn', '!', 'Not complete yet: the tuning needs the oil gravity, gas gravity, Rsb, reservoir temperature and at least one row. A separator test supplies the first three.'));
+    } else if (q.status === 'fail' && !rep.final) {
+      var p = document.createElement('p'); p.className = 'hint';
+      p.textContent = 'Some checks fail. You can still accept the report - the engineer decides - but say why in your study.';
+      host.appendChild(p);
+    }
+  }
+
+  function renderGasReportFinal(host, rep, q, fin) {
+    var tiles = document.createElement('div');
+    tiles.className = 'tiles rep-tiles';
+    var v = function (x, f) { return x === null || x === undefined ? '–' : f(x); };
+    tile(tiles, 'Fluid', fin.gasKind === 'wet' ? 'Wet gas' : 'Dry gas', '');
+    tile(tiles, 'Separator gas gravity', v(fin.gammaG, function (x) { return x.toFixed(4); }), 'air = 1');
+    tile(tiles, 'Condensate-gas ratio', v(fin.cgr, function (x) { return fmt('cgr', x); }), label('cgr'));
+    tile(tiles, 'Condensate gravity', fin.cgr > 0 ? v(fin.apiC, function (x) { return x.toFixed(1); }) : '–', 'API');
+    tile(tiles, 'Reservoir temperature', v(fin.tempF, function (x) { return fmt('T', x); }), label('T'));
+    host.appendChild(tiles);
+    (fin.notes || []).forEach(function (n) { host.appendChild(notice('info', 'i', n)); });
+    var wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    var tbl = document.createElement('table');
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    ['Pressure (' + label('p') + ')', 'Gas z', 'Gas viscosity (' + label('mu') + ')', 'From'].forEach(function (t) { var h = document.createElement('th'); h.textContent = t; hr.appendChild(h); });
+    th.appendChild(hr); tbl.appendChild(th);
+    var tb = document.createElement('tbody');
+    (fin.rows || []).forEach(function (r) {
+      var tr = document.createElement('tr');
+      [fmt('p', r.p), r.z === null ? '' : r.z.toFixed(4), r.mug === null ? '' : fmt('mu', r.mug), r.src].forEach(function (t) {
+        var td = document.createElement('td'); td.textContent = t; tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); wrap.appendChild(tbl);
+    host.appendChild(wrap);
+    var acc = document.createElement('label');
+    acc.className = 'switch rep-accept';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!rep.final; cb.disabled = !fin.ready;
+    cb.addEventListener('change', function () { rep.final = cb.checked; persistReports(); paintReportStatus(); renderReportSend(); });
+    acc.appendChild(cb);
+    acc.appendChild(document.createTextNode(' Accept the finalised data of ' + rep.name + ' for tuning'));
+    host.appendChild(acc);
+    if (!fin.ready) {
+      host.appendChild(notice('warn', '!', 'Not complete yet: the tuning needs the separator gas gravity, the reservoir temperature, at least one z or viscosity row and, for a wet gas, the condensate API.'));
+    } else if (q.status === 'fail' && !rep.final) {
+      var p = document.createElement('p'); p.className = 'hint';
+      p.textContent = 'Some checks fail. You can still accept the report - the engineer decides - but say why in your study.';
+      host.appendChild(p);
+    }
+  }
+
+  /* ---------- step 4: hand the finalised data to the tuning ---------- */
+
+  function renderReportSend() {
+    var host = $('repSend');
+    if (!host) return;
+    host.textContent = '';
+    var ready = fluidReports().filter(function (r) { return r.final; });
+    var m = effectiveMode();
+    var p = document.createElement('p'); p.className = 'hint';
+    if (!ready.length) {
+      p.textContent = 'Accept at least one report in step 3. Its finalised data then goes to the ' +
+        (m === 'several' ? 'PVT samples for screening and the field-wide fit.' : 'one-report laboratory table for ranking and tuning.');
+      host.appendChild(p);
+      return;
+    }
+    var bar = document.createElement('div'); bar.className = 'export-bar';
+    if (m === 'several') {
+      p.textContent = ready.length + ' accepted report' + (ready.length > 1 ? 's go' : ' goes') + ' to the PVT samples, one sample each, ' +
+        'with the fluid description (API, gas gravity, Rsb, temperature) and sampling conditions from the report. ' +
+        'Sending again updates the same samples; the samples you entered by hand are kept.';
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'primary';
+      b.textContent = 'Send ' + ready.length + ' report' + (ready.length > 1 ? 's' : '') + ' to the PVT samples';
+      b.addEventListener('click', sendReportsToSamples);
+      bar.appendChild(b);
+    } else {
+      p.textContent = fluid === 'gas'
+        ? 'The chosen report becomes the case: its separator gas gravity, temperature, separator conditions, gas type, CGR, condensate API and CO2/H2S/N2 go to the case inputs, its z and viscosity rows to the laboratory table, and its composition draws the phase envelope.'
+        : 'The chosen report becomes the case: its API, gas gravity, Rsb, temperature, separator conditions and separator-gas CO2/H2S/N2 go to the case inputs, its finalised rows, Pb and dead-oil viscosity to the laboratory table, and its composition draws the phase envelope.';
+      var f = document.createElement('div'); f.className = 'field';
+      var lb = document.createElement('label'); lb.textContent = 'Report'; lb.htmlFor = 'repSendSel';
+      var sel = document.createElement('select'); sel.id = 'repSendSel';
+      ready.forEach(function (r) { var op = document.createElement('option'); op.value = r.id; op.textContent = r.name; sel.appendChild(op); });
+      if (ready.some(function (r) { return r.id === reports.pick; })) sel.value = reports.pick;
+      f.appendChild(lb); f.appendChild(sel);
+      var b2 = document.createElement('button'); b2.type = 'button'; b2.className = 'primary';
+      b2.textContent = 'Use this report for tuning';
+      b2.addEventListener('click', function () { sendReportToCase(repById(sel.value)); });
+      bar.appendChild(f); bar.appendChild(b2);
+    }
+    host.appendChild(p); host.appendChild(bar);
+  }
+
+  function sendReportsToSamples() {
+    var n = 0, skipped = [];
+    fluidReports().filter(function (r) { return r.final; }).forEach(function (rep) {
+      var fin = Rep.finalise(rep);
+      if (!fin.ready) { skipped.push(rep.name); return; }
+      var id = 'rep-' + rep.id;
+      var s = cleanSample(Rep.toSample(fin, id));
+      var at = -1;
+      samples.list.forEach(function (x, i) { if (x.id === id) at = i; });
+      if (at >= 0) { s.include = samples.list[at].include; samples.list[at] = s; } else samples.list.push(s);
+      n++;
+    });
+    pickedSample = null; poolRank = null;
+    renderSampleList();
+    samplesChanged();
+    $('tab-lab').click();
+    say('info', n + ' report' + (n === 1 ? '' : 's') + ' sent to the PVT samples' +
+      (skipped.length ? '; not complete, so left out: ' + skipped.join(', ') : '') + '. Screen them and fit the correlations below.');
+  }
+
+  function sendGasReportToCase(rep) {
+    var fin = GRep.finalise(rep);
+    if (!fin.ready) { say('error', rep.name + ' is not complete enough to tune to - see step 3.'); return; }
+    var w = { gammaG: +fin.gammaG.toFixed(4), tempF: fin.tempF, gasKind: fin.gasKind };
+    if (fin.pSep !== null) w.pSepPsia = fin.pSep;
+    if (fin.tSep !== null) w.tSepF = fin.tSep;
+    if (fin.gasKind === 'wet') { w.cgr = +fin.cgr.toFixed(2); w.apiC = fin.apiC; }
+    if (fin.impurities) { w.yCO2 = +(fin.impurities.yCO2 * 100).toFixed(3); w.yH2S = +(fin.impurities.yH2S * 100).toFixed(3); w.yN2 = +(fin.impurities.yN2 * 100).toFixed(3); }
+    writeInputs(w);
+    $('preset').value = '';
+    var keep = lab.gas.tune;
+    lab.gas = cleanLab({ rows: fin.rows.map(function (r) { return { p: r.p, z: r.z, mug: r.mug }; }),
+      sampling: { type: fin.type, pRes: fin.sampling.pRes } });
+    lab.gas.tune = keep;
+    setEnvSource(rep.id);
+    renderLabTable();
+    applyFluidVisibility();
+    recompute();
+    $('tab-lab').click();
+    say('info', rep.name + ' is now the case: its fluid description is in the case inputs and its z and viscosity in the laboratory table. Rank and tune below.');
+  }
+
+  function sendReportToCase(rep) {
+    if (!rep) return;
+    if (rep.fluid === 'gas') { sendGasReportToCase(rep); return; }
+    var fin = Rep.finalise(rep);
+    if (!fin.ready) { say('error', rep.name + ' is not complete enough to tune to - see step 3.'); return; }
+    var f = fin.fluid;
+    var w = { api: f.api, gammaG: +f.gammaG.toFixed(4), rsb: f.rsb, tempF: f.tempF };
+    if (f.pSepPsia !== null) w.pSepPsia = f.pSepPsia;
+    if (f.tSepF !== null) w.tSepF = f.tSepF;
+    if (fin.impurities) { w.yCO2 = +(fin.impurities.yCO2 * 100).toFixed(3); w.yH2S = +(fin.impurities.yH2S * 100).toFixed(3); w.yN2 = +(fin.impurities.yN2 * 100).toFixed(3); }
+    writeInputs(w);
+    $('spec').value = 'rsb';
+    $('preset').value = '';
+    var keep = lab.oil.tune;
+    lab.oil = cleanLab({ pb: fin.pb, muod: fin.muod, rows: Rep.toSample(fin, 'x').lab.rows,
+      sampling: { type: fin.type, pRes: fin.sampling.pRes, pwf: fin.sampling.pwf, gor: fin.sampling.gor } });
+    lab.oil.tune = keep;
+    setEnvSource(rep.id);
+    setInput('labPb', lab.oil.pb); setInput('labMuod', lab.oil.muod);
+    writeLabSampling();
+    renderLabTable();
+    applyFluidVisibility();
+    recompute();
+    $('tab-lab').click();
+    say('info', rep.name + ' is now the case: its fluid description is in the case inputs and its finalised data in the laboratory table. Rank and tune below.');
+  }
+
+  /* ---------- import, template, example ---------- */
+
+  /* Oil or gas, CSV or JSON: each report goes to the module that owns it. */
+  function parseAnyReport(text, name) {
+    var t = String(text || '').replace(/^\uFEFF/, '').trim();
+    if (t.charAt(0) === '{' || /^\[\s*[{\]]/.test(t)) {
+      var j;
+      try { j = JSON.parse(t); } catch (e) { throw new Error('The file looks like JSON but does not parse.'); }
+      var list = Array.isArray(j) ? j : Array.isArray(j.reports) ? j.reports : j.reports && Array.isArray(j.reports.list) ? j.reports.list : [j];
+      return list.map(function (o) { return repApi(o).cleanReport(o); });
+    }
+    if (GRep && GRep.isGasText(t)) return GRep.parseReportText(t, name);
+    return Rep.parseReportText(t, name);
+  }
+
+  function importReportFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var msgs = [], added = 0, left = list.length;
+    list.forEach(function (file) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var reps = parseAnyReport(String(reader.result), file.name.replace(/\.[^.]+$/, ''));
+          reps.forEach(function (r) {
+            if (repById(r.id)) r.id = repApi(r).emptyReport().id;
+            reports.list.push(r); openReport[r.id] = true; added++;
+          });
+        } catch (e) { msgs.push(file.name + ': ' + e.message); }
+        done();
+      };
+      reader.onerror = function () { msgs.push(file.name + ': the file could not be read.'); done(); };
+      reader.readAsText(file);
+    });
+    function done() {
+      if (--left) return;
+      if (added && !repById(reports.pick)) reports.pick = reports.list[reports.list.length - added].id;
+      /* show the fluid the files were for */
+      var lastRep = reports.list[reports.list.length - 1];
+      if (added && lastRep && (lastRep.fluid || 'oil') !== fluid) msgs.push('Switch to ' + (lastRep.fluid === 'gas' ? 'Gas reservoir' : 'Oil reservoir') + ' to see the imported reports.');
+      reportsChanged(true);
+      $('repStatus').textContent = (added ? added + ' report' + (added > 1 ? 's' : '') + ' imported.' : 'Nothing imported.') +
+        (msgs.length ? ' ' + msgs.join(' ') : '');
+    }
+  }
+
+  function initReports() {
+    if (!Rep || !$('panel-reports')) return;
+    restoreReports();
+    renderReportList();
+    $('btnRepAdd').addEventListener('click', function () {
+      var r = fluidApi().emptyReport('Report ' + (fluidReports().length + 1));
+      reports.list.push(r);
+      openReport[r.id] = true; openTest[r.id + ':cce'] = true;
+      reports.pick = r.id;
+      reportsChanged(true);
+    });
+    $('btnRepImport').addEventListener('click', function () { $('repFiles').value = ''; $('repFiles').click(); });
+    $('repFiles').addEventListener('change', function (ev) { importReportFiles(ev.target.files); });
+    $('btnRepTemplate').addEventListener('click', function () {
+      saveFile(fluid === 'gas' ? 'pvt-gas-report-template.csv' : 'pvt-report-template.csv', fluidApi().TEMPLATE, function (saved, msg) {
+        $('repStatus').textContent = saved ? 'Saved ' + saved + '. Fill one copy per report and import them together.' : msg;
+      });
+    });
+    $('btnRepDemo').addEventListener('click', function () {
+      var demo = fluid === 'gas' ? GRep.demoReports() : Rep.demoReports(Model);
+      reports.list = reports.list.filter(function (r) { return (r.fluid || 'oil') !== fluid; }).concat(demo);
+      openReport = {}; openTest = {};
+      openReport[demo[1].id] = true;
+      reports.pick = demo[1].id;
+      reportsChanged(true);
+      $('repStatus').textContent = fluid === 'gas'
+        ? 'Three example gas reports loaded. The second has faults to find: a z reading, a CCE volume, a viscosity, the composition total and a field CGR the recombination does not match. The third is a dry gas.'
+        : 'Three example reports loaded. The second has faults to find: a DL density, a CCE reading, a viscosity, the composition and the reported Pb.';
+    });
+    $('btnRepClear').addEventListener('click', function () {
+      reports.list = reports.list.filter(function (r) { return (r.fluid || 'oil') !== fluid; }); reports.pick = null; openReport = {}; openTest = {};
+      reportsChanged(true);
+      $('repStatus').textContent = '';
+    });
+  }
+
+  /* ================================================================ *
    * Laboratory data mode: none, one report, several reports
    * ================================================================ */
 
@@ -2430,6 +3696,8 @@
     if (m === 'none' && tab.getAttribute('aria-selected') === 'true') $('tab-summary').click();
     document.querySelectorAll('#panel-lab .mode-one').forEach(function (e) { e.hidden = m !== 'one'; });
     document.querySelectorAll('#panel-lab .mode-several').forEach(function (e) { e.hidden = m !== 'several'; });
+    applyReportsTab();
+    renderReportSend();
     var note = $('labModeNote');
     note.textContent = '';
     if (labMode === 'several' && fluid === 'gas') {
@@ -2655,6 +3923,7 @@
     }
     applyFluidVisibility();
     applyLabMode();
+    renderReportList();
     recompute();
   }
 
@@ -2672,6 +3941,7 @@
     $('unitMetric').setAttribute('aria-pressed', String(units === 'metric'));
     renderLabTable();
     renderSampleList();
+    renderReportList();
     recompute();
   }
 
@@ -2733,6 +4003,8 @@
     $('btnPlay').addEventListener('click', togglePlay);
     initLab();
     initSamples();
+    restoreEnvSource();
+    initReports();
     initLabMode(linkLabMode);
     initProject();
     $('tableSel').addEventListener('change', renderTable);
@@ -2766,6 +4038,7 @@
         localStorage.removeItem('pvt.inputs.gas');
         localStorage.removeItem('pvt.lab');
         localStorage.removeItem('pvt.samples');
+        localStorage.removeItem('pvt.reports');
         localStorage.removeItem('pvt.labMode');
         localStorage.removeItem('pvt.projectName');
       } catch (e) { /* ignore */ }
