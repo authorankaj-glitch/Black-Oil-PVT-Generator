@@ -742,3 +742,59 @@ button.chip.on { border-color: var(--accent); color: var(--accent); font-weight:
 .project-actions { display: flex; gap: 8px; margin: 2px 0 6px; }
 .project-actions button { flex: 1 1 0; }
 .project-set .hint { margin-top: 0; }
+
+/* ---------------- PVT reports: raw tests, QC, corrections ---------------- */
+.report-card > summary .rep-final-badge {
+  padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 45%, transparent);
+}
+.report-card > summary .rep-final-badge[hidden] { display: none; }
+.test-block { border-top: 1px solid var(--grid); }
+.test-block:last-of-type { border-bottom: 1px solid var(--grid); }
+.test-block > summary {
+  display: flex; align-items: center; gap: 10px; padding: 8px 2px; cursor: pointer; list-style: none; font-size: 13px;
+}
+.test-block > summary::-webkit-details-marker { display: none; }
+.test-block > summary::after { content: "▸"; margin-left: auto; color: var(--text-muted); transition: transform 0.15s; }
+.test-block[open] > summary::after { transform: rotate(90deg); }
+.test-title { font-weight: 600; }
+.test-body { padding: 2px 0 12px 30px; }
+.test-body .hint { max-width: 78ch; }
+.rep-table td:first-child { text-align: center; }
+.rep-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--accent); }
+.rep-table tr.is-out input[type="text"] { color: var(--text-muted); text-decoration: line-through; }
+.rep-table tr.is-flagged input[type="text"] { border-color: color-mix(in srgb, var(--critical) 55%, var(--border)); }
+.rep-table td.rep-flag { width: 18px; color: var(--critical); font-weight: 700; text-align: center; cursor: help; }
+.rep-wrap { max-height: 40vh; }
+.sep-test { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px 0; margin-bottom: 10px; background: var(--surface-2); }
+.sep-head { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+.sep-head input[type="text"] { flex: 1 1 auto; max-width: 320px; }
+.sep-use { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.sep-use input { accent-color: var(--accent); }
+.rep-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.rep-chips .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px 3px 4px; }
+.rep-chips .qc-dot { width: 16px; height: 16px; font-size: 9.5px; }
+.rep-settings {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 4px 18px;
+  padding: 10px 12px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.rep-settings .field { grid-template-columns: 1fr; gap: 4px; }
+.rep-settings .field > label { font-size: 12px; color: var(--text-secondary); }
+.rep-settings select { width: 100%; }
+.rep-boxes { display: grid; gap: 6px; align-content: center; font-size: 12.5px; }
+.rep-charts .lab-dot.slot-8 { stroke: var(--slot-8) !important; }
+.rep-charts .legend-key.scatter.slot-8 { border-color: var(--slot-8); }
+.rep-tiles { margin: 4px 0 12px; }
+.rep-accept { margin: 12px 0 8px; font-weight: 600; }
+@media (max-width: 640px) { .test-body { padding-left: 0; } }
+.rep-table td input.rep-text { text-align: left; font-weight: 600; }
+
+/* readings that can be clicked on a QC chart, and readings left out */
+.lab-dot.pickable { cursor: pointer; }
+.lab-dot.hot { stroke-width: 3.5; }
+.lab-dot.excluded { fill: none; stroke: var(--text-muted) !important; stroke-dasharray: 2.5 2; }
+.legend-key.scatter.excluded { border-style: dashed; border-color: var(--text-muted); }
+.chart-tip .tip-hint { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 11.5px; }
+.rep-pick-hint { margin: 2px 0 10px; }
+.phase-source { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 4px 0 8px; font-size: 12.5px; }
+.phase-source select { max-width: 100%; }

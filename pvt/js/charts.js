@@ -65,6 +65,12 @@
    *                                  among several alternatives
    *   marker: { x, label },          vertical annotation (e.g. Pb)
    *   fmtX, fmtY                     value formatters for the tooltip
+   *   onPick(ref), pickHint(ref)     points that carry a ref can be clicked
+   *                                  (or picked with Enter at the crosshair):
+   *                                  onPick receives the ref, pickHint the
+   *                                  line the tooltip shows for it. A series
+   *                                  with excluded: true draws its points as
+   *                                  dashed open rings (readings left out).
    * }
    */
   function Chart(container, opts) {
@@ -100,7 +106,7 @@
       inLegend.forEach(function (s) {
         var li = document.createElement('li');
         var key = document.createElement('span');
-        key.className = 'legend-key slot-' + s.slot + (s.scatter ? ' scatter' : s.dashed ? ' dashed' : '');
+        key.className = 'legend-key slot-' + s.slot + (s.scatter ? ' scatter' : s.dashed ? ' dashed' : '') + (s.excluded ? ' excluded' : '');
         li.appendChild(key);
         var txt = document.createElement('span');
         txt.textContent = s.name;
@@ -201,11 +207,14 @@
 
     /* series: laboratory points as open markers, everything else as lines */
     var lines = o.series.filter(function (s) { return !s.scatter && s.points.length; });
+    var picks = [];
     o.series.forEach(function (s) {
       if (s.scatter) {
         s.points.forEach(function (p) {
-          svg.appendChild(el('circle', { class: 'lab-dot slot-' + s.slot,
-            cx: sx(p.x), cy: sy(p.y), r: 4.5 }));
+          var c = el('circle', { class: 'lab-dot slot-' + s.slot + (s.excluded ? ' excluded' : '') + (p.ref && o.onPick ? ' pickable' : ''),
+            cx: sx(p.x), cy: sy(p.y), r: 4.5 });
+          svg.appendChild(c);
+          if (p.ref && o.onPick) picks.push({ x: sx(p.x), y: sy(p.y), ref: p.ref, el: c });
         });
         return;
       }
@@ -302,14 +311,49 @@
       });
       return best;
     }
-    overlay.addEventListener('pointermove', function (ev) { show(nearest(ev.clientX)); });
-    overlay.addEventListener('pointerleave', hide);
+    /* clickable readings: the nearest within 12 px of the pointer */
+    var hot = null;
+    function pickAt(clientX, clientY) {
+      var rect = svg.getBoundingClientRect(), mx = clientX - rect.left, my = clientY - rect.top, best = null, bd = 144;
+      picks.forEach(function (q) { var d = (q.x - mx) * (q.x - mx) + (q.y - my) * (q.y - my); if (d < bd) { bd = d; best = q; } });
+      return best;
+    }
+    function setHot(q) {
+      if (hot === q) return;
+      if (hot) hot.el.classList.remove('hot');
+      hot = q;
+      if (hot) hot.el.classList.add('hot');
+      overlay.style.cursor = hot ? 'pointer' : '';
+    }
+    function hintFor(q) {
+      if (!q || !o.pickHint) return;
+      var hd = document.createElement('div');
+      hd.className = 'tip-hint';
+      hd.textContent = o.pickHint(q.ref);
+      self.tip.appendChild(hd);
+      self.tip.hidden = false;
+    }
+    overlay.addEventListener('pointermove', function (ev) {
+      show(nearest(ev.clientX));
+      if (picks.length) { setHot(pickAt(ev.clientX, ev.clientY)); hintFor(hot); }
+    });
+    overlay.addEventListener('pointerleave', function () { setHot(null); hide(); });
+    overlay.addEventListener('click', function (ev) {
+      var q = picks.length ? pickAt(ev.clientX, ev.clientY) : null;
+      if (q) o.onPick(q.ref);
+    });
     svg.addEventListener('focus', function () { show(idx < 0 ? 0 : idx); });
     svg.addEventListener('blur', hide);
     svg.addEventListener('keydown', function (ev) {
       if (ev.key === 'ArrowRight') { show(idx + 1); ev.preventDefault(); }
       else if (ev.key === 'ArrowLeft') { show(idx - 1); ev.preventDefault(); }
       else if (ev.key === 'Escape') { hide(); }
+      else if ((ev.key === 'Enter' || ev.key === ' ') && picks.length && idx >= 0 && lines.length) {
+        /* keyboard: pick the reading nearest the crosshair */
+        var cx = sx(lines[0].points[idx].x), best = null, bd = Infinity;
+        picks.forEach(function (q) { var d = Math.abs(q.x - cx); if (d < bd) { bd = d; best = q; } });
+        if (best) { o.onPick(best.ref); ev.preventDefault(); }
+      }
     });
 
     this.plot.insertBefore(svg, this.tip);

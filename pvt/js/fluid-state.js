@@ -255,6 +255,42 @@
     };
   }
 
+  /* ------------------------------------------------------------------ *
+   * Envelope computed by the equation of state (eos.js) from a measured
+   * composition, in the layout the phase diagram draws. meta carries what
+   * the diagram says about it: source (report name), kPlus and pbEos /
+   * pbBase / matched for an oil, sepInside and dew for a gas.
+   * ------------------------------------------------------------------ */
+  function fromEos(model, e, meta) {
+    var inp = model.input, tres = inp.tempF, gas = model.fluid === 'gas';
+    var pTop = Math.max(e.cricondenbar.p, e.crit.p);
+    if (!gas) {
+      var dT = e.crit.t - tres;
+      var fluidType = dT > 150 ? 'black oil' : dT > 60 ? 'volatile oil' : dT > 0 ? 'near-critical oil' : 'gas condensate';
+      return {
+        kind: 'oil', eos: true, meta: meta, psat: model.pb, satLabel: 'Pb',
+        t0: e.tFirst, p0: P0, tc: e.crit.t, pc: e.crit.p, tres: tres, pb: model.pb,
+        tct: e.tct, pcb: e.cricondenbar.p, dT: dT, fluidType: fluidType,
+        bubble: e.bubble, dew: e.dew, quality: e.quality,
+        tMin: e.tFirst, tMax: Math.max(e.tct, tres),
+        pMaxPlot: Math.max(pTop, model.oil[model.oil.length - 1].p) * 1.08
+      };
+    }
+    var tsep = inp.tSepF, psep = inp.pSepPsia;
+    var type = tres <= e.tct ? 'gas condensate' : meta.sepInside ? 'wet gas' : 'dry gas';
+    var tLo = Math.min(e.tFirst, tsep), tHi = Math.max(e.tct, tres, tsep);
+    return {
+      kind: model.gasKind, eos: true, meta: meta, psat: null, satLabel: null,
+      t0: e.tFirst, p0: P0, tc: e.crit.t, pc: e.crit.p, tres: tres,
+      tct: e.tct, pcb: e.cricondenbar.p, dT: tres - e.crit.t, fluidType: type,
+      bubble: e.bubble, dew: e.dew, quality: e.quality, bubbleAt: null,
+      sep: { t: tsep, p: psep, inside: !!meta.sepInside },
+      inside: function (t, p) { return pointInPolygon(e.bubble.concat(e.dew), t, p); },
+      tMin: tLo, tMax: tHi + 0.06 * (tHi - tLo),
+      pMaxPlot: Math.max(pTop, model.gas[model.gas.length - 1].p) * 1.08
+    };
+  }
+
   /* Even-odd rule on the closed envelope outline. */
   function pointInPolygon(poly, t, p) {
     var inside = false;
@@ -313,7 +349,7 @@
   }
 
   return {
-    interp: interp, barrelState: barrelState, phaseEnvelope: phaseEnvelope,
+    interp: interp, barrelState: barrelState, phaseEnvelope: phaseEnvelope, fromEos: fromEos,
     gasBarrelState: gasBarrelState, pointInPolygon: pointInPolygon,
     stateAt: stateAt, volatility: volatility, BBL_FT3: BBL_FT3
   };
