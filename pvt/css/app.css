@@ -459,6 +459,8 @@ footer.foot {
   display: flex; gap: 8px 24px; flex-wrap: wrap; justify-content: space-between;
 }
 .foot-meta { white-space: nowrap; }
+.foot-meta a { color: var(--accent); text-decoration: none; }
+.foot-meta a:hover { text-decoration: underline; }
 @media (max-width: 720px) { .foot-inner { padding: 10px 16px; } .foot-meta { white-space: normal; } }
 
 /* section headings used on the Method tab */

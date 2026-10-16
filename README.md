@@ -116,6 +116,13 @@ const g = Model.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12,
 console.log(Exp.generate(g, 'cmg', 'field'));
 ```
 
+## What's new
+
+**1.5.0 (2026-10-16)** &mdash; the PVT reports & QC tab: laboratory reports as
+issued, consistency checks, the separator correction of DL data and a
+Peng&ndash;Robinson envelope from the composition. Every major update, with
+what it added and changed, is listed in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Documentation
 
 [`pvt/README.md`](pvt/README.md) covers the full correlation list with
