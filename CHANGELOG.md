@@ -6,6 +6,33 @@ Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
 
+## 1.6.0 &mdash; 2026-10-17 &middot; PDF report
+
+The Export tab writes a **PDF report** of the current case, for readers who
+will not open the tool.
+
+**New**
+- **PDF report** format in the Export tab, in field or metric units:
+  - an **executive summary** written from the case &mdash; fluid and its class,
+    saturation pressure and the properties there, undersaturated and saturated
+    behaviour, correlations, tuning fit and QC outcome &mdash; with key-result tiles;
+  - the **inputs**, the **correlations** and every **quality-check** warning;
+  - the **tuning** multipliers and the fit before and after, when tuning is on;
+  - eight **key plots** as vector charts, the bubble point marked and laboratory
+    points overlaid;
+  - **key calculations** with the numbers substituted, and the full
+    **property table** with the bubble point highlighted;
+  - **method and limitations**, page numbers and the copyright on every page.
+- Report title, author and sections are chosen on the tab and remembered; the
+  project name goes on the cover and into the file name.
+- The PDF is written by a new dependency-free module, `js/report-pdf.js`, so the
+  page still works offline.
+
+**Changed**
+- The export preview shows the report's contents when PDF is selected.
+
+Tests: 277 checks (13 new).
+
 ## 1.5.0 &mdash; 2026-10-16 &middot; PVT reports & QC
 
 A new **PVT reports & QC** tab takes laboratory reports as the laboratory

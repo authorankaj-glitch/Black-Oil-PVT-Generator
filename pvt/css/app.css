@@ -438,6 +438,13 @@ caption { caption-side: top; text-align: left; padding: 10px 12px; color: var(--
 .export-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .export-bar .field { margin: 0; grid-template-columns: 1fr; width: 200px; gap: 4px; }
 .export-bar .field > label { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+/* PDF report options in the Export tab */
+.pdf-opts { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--grid); border-radius: 8px; background: var(--surface-2); }
+.pdf-opts .hint { margin: 0 0 10px; }
+.pdf-opts .export-bar { margin-bottom: 10px; }
+.pdf-opts .export-bar .field { width: 260px; }
+.pdf-sections { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.pdf-sections .switch { font-size: 13px; }
 pre.preview {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px 16px; overflow: auto; max-height: 62vh; font-family: var(--mono);

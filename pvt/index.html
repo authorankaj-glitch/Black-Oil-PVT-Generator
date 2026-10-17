@@ -394,12 +394,27 @@
             <option value="cmg" id="optCmg">CMG IMEX (.dat)</option>
             <option value="csv">CSV property table</option>
             <option value="json">JSON model</option>
+            <option value="pdf">PDF report (.pdf)</option>
           </select></div>
-        <div class="field"><label for="fmtUnits">Deck units</label>
+        <div class="field"><label for="fmtUnits" id="fmtUnitsLabel">Deck units</label>
           <select id="fmtUnits"><option value="field" selected>FIELD</option><option value="metric">METRIC / SI</option></select></div>
         <button type="button" class="primary" id="btnDownload">Download</button>
         <button type="button" id="btnCopy">Copy to clipboard</button>
         <span id="copyStatus" class="hint" role="status"></span>
+      </div>
+      <div class="pdf-opts" id="pdfOpts" hidden>
+        <p class="hint">A report for a reader who will not open the tool: an executive summary written from the current case, the key results, the inputs and correlations, the quality checks, the tuning when it is applied, the key plots, worked calculations with the numbers substituted and the full property table. The project name in the case inputs goes on the cover.</p>
+        <div class="export-bar">
+          <div class="field"><label for="pdfTitle">Report title</label>
+            <input type="text" id="pdfTitle" maxlength="90" placeholder="PVT Study Report"></div>
+          <div class="field"><label for="pdfAuthor">Prepared by</label>
+            <input type="text" id="pdfAuthor" maxlength="90" placeholder="(optional)"></div>
+        </div>
+        <div class="pdf-sections" role="group" aria-label="Report sections">
+          <label class="switch"><input type="checkbox" id="pdfPlots" checked> Key plots</label>
+          <label class="switch"><input type="checkbox" id="pdfCalcs" checked> Key calculations and property table</label>
+          <label class="switch"><input type="checkbox" id="pdfMethod" checked> Method and limitations</label>
+        </div>
       </div>
       <pre class="preview" id="exportPreview" tabindex="0"></pre>
     </section>
@@ -491,7 +506,7 @@
 <footer class="foot">
   <div class="foot-inner">
     <span>Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.</span>
-    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; MIT licence &middot; runs entirely in your browser &middot; <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version">v1.5.0 &ndash; what&rsquo;s new</a></span>
+    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; MIT licence &middot; runs entirely in your browser &middot; <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version">v1.6.0 &ndash; what&rsquo;s new</a></span>
   </div>
 </footer>
 
@@ -504,6 +519,7 @@
 <script src="js/gas-reports.js"></script>
 <script src="js/project.js"></script>
 <script src="js/export.js"></script>
+<script src="js/report-pdf.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/fluid-state.js"></script>
 <script src="js/visuals.js"></script>
