@@ -123,6 +123,9 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 
 ## What's new
 
+**1.6.1 (2026-10-17)** &mdash; the PDF report gets its own Download PDF report
+button in the Export tab, outside the Format list.
+
 **1.6.0 (2026-10-17)** &mdash; a PDF report from the Export tab: an executive
 summary, the key results, the inputs, QC and tuning, the key plots and worked
 calculations with the numbers substituted.

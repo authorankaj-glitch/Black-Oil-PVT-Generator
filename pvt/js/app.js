@@ -1564,11 +1564,11 @@
   /* ---------------- export ---------------- */
   var Report = window.PVTReport;
 
-  /* The PDF report's options: what the Export tab shows, plus the project
-     name from the case inputs for the cover. */
+  /* The PDF report's options: what the report panel of the Export tab shows,
+     plus the project name from the case inputs for the cover. */
   function reportOpts() {
     return {
-      units: $('fmtUnits').value, title: $('pdfTitle').value, preparedBy: $('pdfAuthor').value,
+      units: $('pdfUnits').value, title: $('pdfTitle').value, preparedBy: $('pdfAuthor').value,
       project: $('projectName').value,
       plots: $('pdfPlots').checked, calcs: $('pdfCalcs').checked, method: $('pdfMethod').checked
     };
@@ -1577,7 +1577,7 @@
     var o = reportOpts();
     try {
       localStorage.setItem('pvt.report', JSON.stringify({ title: o.title, preparedBy: o.preparedBy,
-        plots: o.plots, calcs: o.calcs, method: o.method }));
+        units: o.units, plots: o.plots, calcs: o.calcs, method: o.method }));
     } catch (e) { /* ignore */ }
   }
   function restoreReportOpts() {
@@ -1586,22 +1586,22 @@
     if (!o) return;
     $('pdfTitle').value = o.title || '';
     $('pdfAuthor').value = o.preparedBy || '';
+    if (o.units === 'field' || o.units === 'metric') $('pdfUnits').value = o.units;
     $('pdfPlots').checked = o.plots !== false;
     $('pdfCalcs').checked = o.calcs !== false;
     $('pdfMethod').checked = o.method !== false;
   }
 
+  /* The report panel's "Report contents" preview. */
+  function renderReportOutline() {
+    if (!model) return;
+    $('pdfOutline').textContent = Report.outline(model, reportOpts());
+  }
+
+  /* Simulator decks / CSV / JSON preview, and the report contents. */
   function renderExport() {
     if (!model) return;
-    var pdf = $('fmtSel').value === 'pdf';
-    $('pdfOpts').hidden = !pdf;
-    $('btnCopy').hidden = pdf;
-    $('fmtUnitsLabel').textContent = pdf ? 'Report units' : 'Deck units';
-    $('btnDownload').textContent = pdf ? 'Download PDF' : 'Download';
-    if (pdf) {
-      $('exportPreview').textContent = 'Contents of the PDF report\n\n' + Report.outline(model, reportOpts());
-      return;
-    }
+    renderReportOutline();
     var text = Exp.generate(model, $('fmtSel').value, $('fmtUnits').value);
     var lines = text.split('\n');
     $('exportPreview').textContent = lines.length > 900
@@ -1621,11 +1621,11 @@
   function downloadReport() {
     var bytes, opts = reportOpts();
     try { bytes = Report.build(model, opts); } catch (e) {
-      $('copyStatus').textContent = 'The report could not be built: ' + e.message;
+      $('pdfStatus').textContent = 'The report could not be built: ' + e.message;
       return;
     }
     saveBinary(Report.filename(model, opts), bytes, 'application/pdf', function (saved, msg) {
-      $('copyStatus').textContent = saved ? 'Saved ' + saved + '.' : msg;
+      $('pdfStatus').textContent = saved ? 'Saved ' + saved + '.' : msg;
     });
   }
 
@@ -1652,7 +1652,6 @@
   }
 
   function download() {
-    if ($('fmtSel').value === 'pdf') { downloadReport(); return; }
     var fmtName = $('fmtSel').value, u = $('fmtUnits').value;
     var name = Exp.filename(fmtName, u);
     saveFile(name, Exp.generate(model, fmtName, u), function (saved, msg) {
@@ -1746,7 +1745,7 @@
     try { $('projectName').value = localStorage.getItem('pvt.projectName') || ''; } catch (e) { /* ignore */ }
     $('projectName').addEventListener('input', function () {
       try { localStorage.setItem('pvt.projectName', $('projectName').value); } catch (e) { /* ignore */ }
-      if ($('fmtSel').value === 'pdf') renderExport();
+      renderReportOutline();
     });
     $('btnSaveProject').addEventListener('click', saveProject);
     $('btnOpenProject').addEventListener('click', function () { $('projectFile').value = ''; $('projectFile').click(); });
@@ -4085,11 +4084,12 @@
     $('fmtSel').addEventListener('change', renderExport);
     $('fmtUnits').addEventListener('change', renderExport);
     $('btnDownload').addEventListener('click', download);
+    $('btnPdf').addEventListener('click', downloadReport);
     restoreReportOpts();
-    ['pdfTitle', 'pdfAuthor', 'pdfPlots', 'pdfCalcs', 'pdfMethod'].forEach(function (id) {
+    ['pdfTitle', 'pdfAuthor', 'pdfUnits', 'pdfPlots', 'pdfCalcs', 'pdfMethod'].forEach(function (id) {
       $(id).addEventListener(/^pdf(Title|Author)$/.test(id) ? 'input' : 'change', function () {
         saveReportOpts();
-        renderExport();
+        renderReportOutline();
       });
     });
     $('btnCopy').addEventListener('click', function () {
