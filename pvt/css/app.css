@@ -438,9 +438,18 @@ caption { caption-side: top; text-align: left; padding: 10px 12px; color: var(--
 .export-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
 .export-bar .field { margin: 0; grid-template-columns: 1fr; width: 200px; gap: 4px; }
 .export-bar .field > label { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
-/* PDF report options in the Export tab */
-.pdf-opts { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--grid); border-radius: 8px; background: var(--surface-2); }
+/* PDF report: its own panel with its own button, above the deck exports */
+.pdf-opts { margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--grid); border-radius: 8px; background: var(--surface-2); }
 .pdf-opts .hint { margin: 0 0 10px; }
+.pdf-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }
+.pdf-head h3, .export-head { margin: 0 0 6px; font-size: 15px; }
+.pdf-head .hint { max-width: 72ch; }
+.pdf-btn { flex: none; white-space: nowrap; }
+.pdf-opts .export-bar .field.narrow { width: 160px; }
+.pdf-outline { margin-top: 10px; }
+.pdf-outline summary { cursor: pointer; font-size: 13px; color: var(--text-muted); }
+.pdf-outline pre.preview { margin: 8px 0 0; max-height: 40vh; }
+@media (max-width: 640px) { .pdf-head { flex-direction: column; } .pdf-btn { width: 100%; } }
 .pdf-opts .export-bar { margin-bottom: 10px; }
 .pdf-opts .export-bar .field { width: 260px; }
 .pdf-sections { display: flex; flex-wrap: wrap; gap: 8px 20px; }

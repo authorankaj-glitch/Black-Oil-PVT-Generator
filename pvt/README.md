@@ -404,8 +404,10 @@ assumptions that produced it.
 
 ### PDF report
 
-Choose **PDF report** in the Export tab for a document a reader can use without
-opening the tool. It is written from the current case:
+Click **Download PDF report** at the top of the Export tab for a document a
+reader can use without opening the tool. The report has its own panel and
+button, separate from the deck formats, with its own title, author, units and
+sections. It is written from the current case:
 
 1. **Executive summary** &mdash; the fluid, its classification, the saturation
    pressure and the properties there, the undersaturated and saturated

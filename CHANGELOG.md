@@ -6,6 +6,18 @@ Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
 
+## 1.6.1 &mdash; 2026-10-17 &middot; PDF report button
+
+**Changed**
+- The PDF report has its **own panel and Download PDF report button** at the
+  top of the Export tab, instead of an entry in the Format list, so it is
+  visible straight away. The report keeps its own units choice, and a
+  collapsible **Report contents** preview shows what it will hold.
+- The Format list now holds only the simulator decks, CSV and JSON; their
+  preview no longer switches to the report outline.
+
+Tests: 277 checks.
+
 ## 1.6.0 &mdash; 2026-10-17 &middot; PDF report
 
 The Export tab writes a **PDF report** of the current case, for readers who
