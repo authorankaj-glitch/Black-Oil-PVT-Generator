@@ -19,6 +19,7 @@ var PJ = require('../js/project.js');
 var RP = require('../js/reports.js');
 var GR = require('../js/gas-reports.js');
 var EO = require('../js/eos.js');
+var RE = require('../js/report-pdf.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -880,6 +881,44 @@ section('24. PVT reports: import, QC and the separator correction');
 
   var pk = PJ.unpack(JSON.stringify(PJ.pack({ inputs: { oil: { inputs: { fluid: 'oil' } } }, reports: { list: [rep], pick: rep.id } })));
   ok('project files carry the reports', pk.reports.list.length === 1 && pk.reports.pick === rep.id);
+})();
+
+/* PDF report: a valid file, the sections asked for, both fluids and unit systems */
+(function () {
+  section('PDF report');
+  function asText(b) { var s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; }
+  var oil = M.build({ api: 35, gammaG: 0.75, tempF: 180, rsb: 600, pMin: 100, pMax: 6000, nSat: 15, nUnsat: 6, salinity: 3,
+                      lab: { rows: [{ p: 1000, rs: 250, bo: 1.15, muo: 1.1 }] } });
+  var when = new Date(Date.UTC(2026, 9, 17, 4, 0, 0));
+  var b = RE.build(oil, { project: 'Field X', preparedBy: 'A. Engineer', now: when }), t = asText(b);
+  ok('report is a PDF file with an end-of-file marker', /^%PDF-1\.4/.test(t) && /%%EOF\n$/.test(t));
+  var xref = +t.match(/startxref\n(\d+)/)[1];
+  ok('startxref points at the cross-reference table', t.substr(xref, 4) === 'xref');
+  var offs = t.slice(xref).match(/\d{10} 00000 n/g).map(function (l) { return +l.slice(0, 10); });
+  ok('every object offset in the xref is right', offs.every(function (o, i) { return t.substr(o, String(i + 1).length + 6) === (i + 1) + ' 0 obj'; }));
+  var lens = t.match(/\/Length (\d+) >>\nstream\n/g).length, pages = +t.match(/\/Type \/Pages \/Count (\d+)/)[1];
+  ok('one content stream per page, several pages', lens === pages && pages >= 3, pages + ' pages');
+  ok('stream lengths match their contents', (function () {
+    var re = /\/Length (\d+) >>\nstream\n/g, m;
+    while ((m = re.exec(t))) { if (t.substr(m.index + m[0].length + +m[1], 10) !== '\nendstream') return false; }
+    return true;
+  })());
+  ok('the report carries the summary, the plots, the calculations and the credit',
+     ['Executive summary', 'Key results', 'Key plots', 'Key calculations', 'PVT property table', 'Method and limitations',
+      'Field X', 'A. Engineer', 'Ankaj Kumar Sinha'].every(function (k) { return t.indexOf(k) >= 0; }));
+  ok('the bubble point is stated in the executive summary', RE.summary(oil, {}).join(' ').indexOf(oil.pb.toFixed(0) + ' psia') >= 0);
+  ok('metric report states the bubble point in bara', RE.summary(oil, { units: 'metric' }).join(' ').indexOf((oil.pb * 0.0689475729).toFixed(1) + ' bara') >= 0);
+  var short = asText(RE.build(oil, { plots: false, calcs: false, method: false, now: when }));
+  ok('sections can be left out', short.indexOf('Key plots') < 0 && short.indexOf('Key calculations') < 0 &&
+     short.indexOf('Executive summary') >= 0 && short.length < t.length);
+  ok('text is WinAnsi: degree sign and parentheses encoded', RE.encode('180 °F (x)') === '180 °F \\(x\\)' &&
+     RE.encode('≤') === '<=');
+  ok('wrapped lines fit their width', RE.wrap(RE.summary(oil, {})[0], 300, 9.5).every(function (l) { return RE.textWidth(l, 9.5) <= 300; }));
+  var gas = M.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, tempF: 230, cgr: 12, apiC: 58, pMin: 200, pMax: 6000, salinity: 3 });
+  var g = asText(RE.build(gas, { units: 'metric', now: when }));
+  ok('gas report builds, in metric units', /Wet gas reservoir/.test(g) && /bara/.test(g) && /%%EOF/.test(g));
+  ok('report file name follows the project name', RE.filename(oil, { project: 'Field X / North' }) === 'Field_X_North_report.pdf' &&
+     RE.filename(oil, {}) === 'PVT_report.pdf');
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

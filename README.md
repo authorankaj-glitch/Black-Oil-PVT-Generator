@@ -96,6 +96,7 @@ that places the reservoir and the separator relative to the cricondentherm
 | ECLIPSE / OPM Flow / tNavigator (`.INC`) | oil: `DENSITY`, `PVTO`, `PVDG`, `PVTW`, `ROCK`; gas: `DENSITY`, `PVDG`, `PVTW`, `ROCK` &mdash; FIELD or METRIC |
 | CMG IMEX (`.dat`) | oil: `*MODEL *BLACKOIL`, `*PVT *BG`, `*CO`/`*CVO`; dry gas: `*MODEL *GASWATER` + `*PVTG`; wet gas: `*MODEL *GASWATER_WITH_CONDENSATE` + `*PVTG *RV` &mdash; FIELD or SI |
 | CSV / JSON | the full property table, and the complete model for scripting |
+| PDF report | an executive summary, the key results, inputs, QC, tuning, key plots and worked calculations &mdash; FIELD or METRIC |
 
 Every export carries a header recording the inputs, the correlations used and
 any QC warnings, so a deck can be traced back to the assumptions that produced
@@ -114,9 +115,17 @@ console.log(Exp.eclipse(m, 'field'));
 const g = Model.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, cgr: 12,
                         apiC: 58, tempF: 230, pMax: 6000 });
 console.log(Exp.generate(g, 'cmg', 'field'));
+
+// PDF report (Uint8Array)
+const Rep = require('./pvt/js/report-pdf.js');
+require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', units: 'metric' }));
 ```
 
 ## What's new
+
+**1.6.0 (2026-10-17)** &mdash; a PDF report from the Export tab: an executive
+summary, the key results, the inputs, QC and tuning, the key plots and worked
+calculations with the numbers substituted.
 
 **1.5.0 (2026-10-16)** &mdash; the PVT reports & QC tab: laboratory reports as
 issued, consistency checks, the separator correction of DL data and a
@@ -136,7 +145,7 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-264 checks: reference values for every correlation, the physical invariants a
+277 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis

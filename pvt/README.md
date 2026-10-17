@@ -392,6 +392,7 @@ study is available.
 | CMG IMEX / GEM (`.dat`) | `*MODEL *BLACKOIL`, `*PVT *BG`, `*CO`, `*CVO`, `*DENSITY`, `*REFPW`/`*BWI`/`*CW`/`*VWI`/`*CVW`, `*CPOR`/`*PRPOR` | `*INUNIT *FIELD` (E<sub>g</sub> in ft³/bbl) or `*INUNIT *SI` |
 | CSV | every property at every pressure node (gas mode adds R<sub>v</sub>, E<sub>g</sub> and the well-stream B<sub>g</sub>) | field units |
 | JSON | the complete model, for scripting and QC | field units |
+| PDF report | executive summary, key results, inputs and correlations, quality checks, tuning, key plots, worked calculations, property table, method | field or metric |
 
 The gas-mode CMG deck follows the `*GASWATER` / `*GASWATER_WITH_CONDENSATE`
 keyword set. CMG keyword sets vary between IMEX versions, so check the deck on
@@ -400,6 +401,36 @@ import into Builder the first time.
 Every export carries a header recording the inputs, the correlations used, the
 generation timestamp and any QC warnings, so a deck can be traced back to the
 assumptions that produced it.
+
+### PDF report
+
+Choose **PDF report** in the Export tab for a document a reader can use without
+opening the tool. It is written from the current case:
+
+1. **Executive summary** &mdash; the fluid, its classification, the saturation
+   pressure and the properties there, the undersaturated and saturated
+   behaviour, the correlations, whether the model is tuned (with the fit before
+   and after) and the QC outcome; then the key-result tiles.
+2. **Inputs and basis** and the **correlations** used.
+3. **Quality checks** &mdash; every range and table warning.
+4. **Tuning to laboratory data** (when applied) &mdash; the multipliers and the AARE
+   before and after tuning.
+5. **Key plots** &mdash; eight vector charts (oil: R<sub>s</sub>, B<sub>o</sub>,
+   &mu;<sub>o</sub>, &rho;<sub>o</sub>, z, B<sub>g</sub>, &mu;<sub>g</sub>,
+   B<sub>w</sub>; gas: z, B<sub>g</sub>, &mu;<sub>g</sub>, &rho;<sub>g</sub>,
+   c<sub>g</sub>, E<sub>g</sub>, B<sub>w</sub>, &mu;<sub>w</sub>) with the bubble
+   point marked and any laboratory points overlaid.
+6. **Key calculations** &mdash; the main steps with the numbers substituted
+   (oil gravity, density, P<sub>b</sub>, B<sub>ob</sub>, live-oil density,
+   pseudo-criticals, reduced conditions, z, B<sub>g</sub>, &hellip;) and the full
+   property table.
+7. **Method and limitations**.
+
+The title, the author and the sections are chosen on the tab; the project name
+from the case inputs goes on the cover. The report units follow the units
+selector. The PDF is written by `js/report-pdf.js` with no library &mdash; A4
+pages, the standard Helvetica fonts, vector charts &mdash; so it works offline
+like the rest of the page.
 
 ## Files
 
@@ -416,6 +447,7 @@ pvt/
   js/gas-reports.js     dry and wet gas PVT reports: import, QC, finalised z and viscosity
   js/project.js         project files: save and reopen a session
   js/export.js          ECLIPSE / CMG / CSV / JSON writers
+  js/report-pdf.js      PDF report: executive summary, key plots and calculations
   js/charts.js          SVG charts with crosshair, tooltip and keyboard access
   js/fluid-state.js     cursor-pressure fluid state and the schematic P-T envelope
   js/visuals.js         the barrel and the phase diagram
@@ -423,7 +455,7 @@ pvt/
   tests/run-tests.js    regression tests
 ```
 
-`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `eos.js`, `reports.js`, `gas-reports.js`, `project.js` and `export.js` are UMD modules: the same
+`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `eos.js`, `reports.js`, `gas-reports.js`, `project.js`, `export.js` and `report-pdf.js` are UMD modules: the same
 files that the page loads can be `require()`d from Node, so the library is
 usable in a scripted workflow.
 
@@ -450,7 +482,7 @@ console.log(Exp.cmg(tuned, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-264 checks covering reference values for each correlation, the physical
+277 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
@@ -477,6 +509,10 @@ spreadsheet-saved CSV (padded rows, a quoted name, an inline comment, semicolons
 with decimal commas) to read the same, the CCE bubble point to be the reading at
 V/V<sub>sat</sub> = 1, the gas examples to classify and screen correctly, and the
 Peng&ndash;Robinson bubble point to be found and matched to a target.
+The PDF-report checks require a structurally valid file (cross-reference
+offsets and stream lengths exact), every section asked for and none left out,
+the bubble point stated in the summary in both unit systems, and the gas report
+to build in metric units.
 
 ## Limitations
 

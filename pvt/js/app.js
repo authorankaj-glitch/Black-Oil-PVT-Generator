@@ -1562,7 +1562,46 @@
   }
 
   /* ---------------- export ---------------- */
+  var Report = window.PVTReport;
+
+  /* The PDF report's options: what the Export tab shows, plus the project
+     name from the case inputs for the cover. */
+  function reportOpts() {
+    return {
+      units: $('fmtUnits').value, title: $('pdfTitle').value, preparedBy: $('pdfAuthor').value,
+      project: $('projectName').value,
+      plots: $('pdfPlots').checked, calcs: $('pdfCalcs').checked, method: $('pdfMethod').checked
+    };
+  }
+  function saveReportOpts() {
+    var o = reportOpts();
+    try {
+      localStorage.setItem('pvt.report', JSON.stringify({ title: o.title, preparedBy: o.preparedBy,
+        plots: o.plots, calcs: o.calcs, method: o.method }));
+    } catch (e) { /* ignore */ }
+  }
+  function restoreReportOpts() {
+    var o = null;
+    try { o = JSON.parse(localStorage.getItem('pvt.report')); } catch (e) { o = null; }
+    if (!o) return;
+    $('pdfTitle').value = o.title || '';
+    $('pdfAuthor').value = o.preparedBy || '';
+    $('pdfPlots').checked = o.plots !== false;
+    $('pdfCalcs').checked = o.calcs !== false;
+    $('pdfMethod').checked = o.method !== false;
+  }
+
   function renderExport() {
+    if (!model) return;
+    var pdf = $('fmtSel').value === 'pdf';
+    $('pdfOpts').hidden = !pdf;
+    $('btnCopy').hidden = pdf;
+    $('fmtUnitsLabel').textContent = pdf ? 'Report units' : 'Deck units';
+    $('btnDownload').textContent = pdf ? 'Download PDF' : 'Download';
+    if (pdf) {
+      $('exportPreview').textContent = 'Contents of the PDF report\n\n' + Report.outline(model, reportOpts());
+      return;
+    }
     var text = Exp.generate(model, $('fmtSel').value, $('fmtUnits').value);
     var lines = text.split('\n');
     $('exportPreview').textContent = lines.length > 900
@@ -1579,7 +1618,41 @@
     window.claude.use('downloads').then(function (d) { downloadsApi = d; }, function () { downloadsApi = null; });
   }
 
+  function downloadReport() {
+    var bytes, opts = reportOpts();
+    try { bytes = Report.build(model, opts); } catch (e) {
+      $('copyStatus').textContent = 'The report could not be built: ' + e.message;
+      return;
+    }
+    saveBinary(Report.filename(model, opts), bytes, 'application/pdf', function (saved, msg) {
+      $('copyStatus').textContent = saved ? 'Saved ' + saved + '.' : msg;
+    });
+  }
+
+  /* Hand a binary file (the PDF report) to the viewer; same contract as saveFile. */
+  function saveBinary(name, bytes, mime, done) {
+    var blob = new Blob([bytes], { type: mime });
+    function viaLink() {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+      done(name);
+    }
+    if (downloadsApi) {
+      downloadsApi.save({ filename: name, data: blob }).then(function () { done(name); }, function (e) {
+        if (e && e.code === 'declined') done(null, 'Download cancelled.');
+        else viaLink();
+      });
+      return;
+    }
+    viaLink();
+  }
+
   function download() {
+    if ($('fmtSel').value === 'pdf') { downloadReport(); return; }
     var fmtName = $('fmtSel').value, u = $('fmtUnits').value;
     var name = Exp.filename(fmtName, u);
     saveFile(name, Exp.generate(model, fmtName, u), function (saved, msg) {
@@ -1673,6 +1746,7 @@
     try { $('projectName').value = localStorage.getItem('pvt.projectName') || ''; } catch (e) { /* ignore */ }
     $('projectName').addEventListener('input', function () {
       try { localStorage.setItem('pvt.projectName', $('projectName').value); } catch (e) { /* ignore */ }
+      if ($('fmtSel').value === 'pdf') renderExport();
     });
     $('btnSaveProject').addEventListener('click', saveProject);
     $('btnOpenProject').addEventListener('click', function () { $('projectFile').value = ''; $('projectFile').click(); });
@@ -4011,6 +4085,13 @@
     $('fmtSel').addEventListener('change', renderExport);
     $('fmtUnits').addEventListener('change', renderExport);
     $('btnDownload').addEventListener('click', download);
+    restoreReportOpts();
+    ['pdfTitle', 'pdfAuthor', 'pdfPlots', 'pdfCalcs', 'pdfMethod'].forEach(function (id) {
+      $(id).addEventListener(/^pdf(Title|Author)$/.test(id) ? 'input' : 'change', function () {
+        saveReportOpts();
+        renderExport();
+      });
+    });
     $('btnCopy').addEventListener('click', function () {
       var text = Exp.generate(model, $('fmtSel').value, $('fmtUnits').value);
       var done = function (msg) {
@@ -4041,6 +4122,7 @@
         localStorage.removeItem('pvt.reports');
         localStorage.removeItem('pvt.labMode');
         localStorage.removeItem('pvt.projectName');
+        localStorage.removeItem('pvt.report');
       } catch (e) { /* ignore */ }
       location.reload();
     });
