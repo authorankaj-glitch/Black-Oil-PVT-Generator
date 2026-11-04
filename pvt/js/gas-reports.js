@@ -1,5 +1,5 @@
 /*
- * Black-Oil PVT Generator
+ * PhaseWiz - Black-Oil PVT Generator
  * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
  *
  * gas-reports.js -- PVT reports of dry and wet gases: quality control and
@@ -551,7 +551,7 @@
   }
 
   var TEMPLATE = [
-    '# Black-Oil PVT Generator - gas PVT report import template',
+    '# PhaseWiz (Black-Oil PVT Generator) - gas PVT report import template',
     '# Copyright (c) 2026 Ankaj Kumar Sinha - MIT licence',
     '# Field units. One file per report; lines starting with # are ignored, as are header rows.',
     '# Dry and wet gases (single-phase in the reservoir). Leave a cell empty if not measured.',

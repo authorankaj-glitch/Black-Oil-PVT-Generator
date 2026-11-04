@@ -1,5 +1,5 @@
 /*
- * Black-Oil PVT Generator
+ * PhaseWiz - Black-Oil PVT Generator
  * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
  *
  * reports.js -- raw PVT laboratory tests: quality control, corrections and
@@ -1115,7 +1115,7 @@
   }
 
   var TEMPLATE = [
-    '# Black-Oil PVT Generator - PVT report import template',
+    '# PhaseWiz (Black-Oil PVT Generator) - PVT report import template',
     '# Copyright (c) 2026 Ankaj Kumar Sinha - MIT licence',
     '# Field units. One file per report; lines starting with # are ignored, as are header rows.',
     '# Save from a spreadsheet as CSV (comma, semicolon or tab separated). Leave a cell empty if not measured.',

@@ -269,8 +269,8 @@ ok('JSON round-trips', (function () {
   return j.oil.length === m.oil.length && Math.abs(j.pb - m.pb) < 1e-9;
 })());
 ok('every export carries the provenance header', (function () {
-  return /Black-Oil PVT Generator/.test(ecl) && /Black-Oil PVT Generator/.test(imex) &&
-         /Black-Oil PVT Generator/.test(csv) && /CORRELATIONS/.test(ecl);
+  return /PhaseWiz \(Black-Oil PVT Generator/.test(ecl) && /PhaseWiz \(Black-Oil PVT Generator/.test(imex) &&
+         /PhaseWiz \(Black-Oil PVT Generator/.test(csv) && /CORRELATIONS/.test(ecl);
 })());
 
 section('12. Robustness across a fluid sweep');
@@ -800,7 +800,7 @@ section('23. Project files and credits');
            /Copyright \(c\) 2026 Ankaj Kumar Sinha/.test(E.generate(g, f, 'field'));
   }));
   var js = JSON.parse(E.generate(m, 'json', 'field'));
-  ok('JSON export names the generator and its author', js.generator === 'Black-Oil PVT Generator' && /Ankaj Kumar Sinha/.test(js.copyright) && js.pb > 0);
+  ok('JSON export names the generator and its author', js.generator === 'PhaseWiz (Black-Oil PVT Generator)' && /Ankaj Kumar Sinha/.test(js.copyright) && js.pb > 0);
 })();
 
 section('24. PVT reports: import, QC and the separator correction');
@@ -905,7 +905,7 @@ section('24. PVT reports: import, QC and the separator correction');
   })());
   ok('the report carries the summary, the plots, the calculations and the credit',
      ['Executive summary', 'Key results', 'Key plots', 'Key calculations', 'PVT property table', 'Method and limitations',
-      'Field X', 'A. Engineer', 'Ankaj Kumar Sinha'].every(function (k) { return t.indexOf(k) >= 0; }));
+      'Field X', 'A. Engineer', 'Ankaj Kumar Sinha', 'PhaseWiz'].every(function (k) { return t.indexOf(k) >= 0; }));
   ok('the bubble point is stated in the executive summary', RE.summary(oil, {}).join(' ').indexOf(oil.pb.toFixed(0) + ' psia') >= 0);
   ok('metric report states the bubble point in bara', RE.summary(oil, { units: 'metric' }).join(' ').indexOf((oil.pb * 0.0689475729).toFixed(1) + ' bara') >= 0);
   var short = asText(RE.build(oil, { plots: false, calcs: false, method: false, now: when }));

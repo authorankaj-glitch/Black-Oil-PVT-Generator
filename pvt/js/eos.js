@@ -1,5 +1,5 @@
 /*
- * Black-Oil PVT Generator
+ * PhaseWiz - Black-Oil PVT Generator
  * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
  *
  * eos.js -- a small Peng-Robinson equation of state for drawing the

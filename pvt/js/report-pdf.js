@@ -1,5 +1,5 @@
 /*
- * Black-Oil PVT Generator
+ * PhaseWiz - Black-Oil PVT Generator
  * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
  *
  * report-pdf.js -- a PDF report of the current PVT model: an executive
@@ -32,7 +32,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var TOOL = 'Black-Oil PVT Generator';
+  var TOOL = 'PhaseWiz - Black-Oil PVT Generator';
   var AUTHOR = 'Ankaj Kumar Sinha';
   var COPYRIGHT = '© 2026 Ankaj Kumar Sinha · MIT licence · github.com/authorankaj-glitch/Black-Oil-PVT-Generator';
 
@@ -229,6 +229,42 @@
       n2(cx - r) + ' ' + n2(y - k) + ' ' + n2(cx - k) + ' ' + n2(y - r) + ' ' + n2(cx) + ' ' + n2(y - r) + ' c ' +
       n2(cx + k) + ' ' + n2(y - r) + ' ' + n2(cx + r) + ' ' + n2(y - k) + ' ' + n2(cx + r) + ' ' + n2(y) + ' c ';
     this.ops.push(rgb(o.fill || '#ffffff') + ' rg ' + this.stroke({ color: o.stroke || '#0f1b2d', w: o.w || 0.8 }) + path + 'B');
+  };
+  /* The PhaseWiz mark (favicon.svg) at (x, y), size points square, drawn in
+     its own 32-unit coordinates. 'light' is the variant for a coloured
+     band: a white tile with the envelope in blue. No transparency in this
+     writer, so the shaded two-phase region is a flat blend. */
+  PdfPage.prototype.mark = function (x, y, size, variant) {
+    var L = variant === 'light';
+    var col = L ? { tile: '#ffffff', region: '#e3edfb', bubble: '#1f63c6', dew: '#7aa9e8', spark: '#f29a1f', spark2: '#f6bd5c' }
+                : { tile: '#1f63c6', region: '#427ccf', bubble: '#ffffff', dew: '#a9ccff', spark: '#ffb13d', spark2: '#ffd98f' };
+    var k = size / 32, P = function (a, b) { return n2(a) + ' ' + n2(b) + ' '; };
+    /* quadratic control point to cubic, from the current point */
+    var cur = [0, 0];
+    var M = function (a, b) { cur = [a, b]; return P(a, b) + 'm '; };
+    var Cc = function (a, b, c, d, e, f) { cur = [e, f]; return P(a, b) + P(c, d) + P(e, f) + 'c '; };
+    var Q = function (cx, cy, ex, ey) {
+      var x0 = cur[0], y0 = cur[1];
+      return Cc(x0 + 2 / 3 * (cx - x0), y0 + 2 / 3 * (cy - y0), ex + 2 / 3 * (cx - ex), ey + 2 / 3 * (cy - ey), ex, ey);
+    };
+    var r = 7.5, q = 0.5523 * r;
+    var tile = M(r, 0) + P(32 - r, 0) + 'l ' + Cc(32 - r + q, 0, 32, r - q, 32, r) + P(32, 32 - r) + 'l ' +
+      Cc(32, 32 - r + q, 32 - r + q, 32, 32 - r, 32) + P(r, 32) + 'l ' + Cc(r - q, 32, 0, 32 - r + q, 0, 32 - r) +
+      P(0, r) + 'l ' + Cc(0, r - q, r - q, 0, r, 0) + 'h ';
+    var bub = M(6.5, 26.5) + Cc(7.6, 19, 9.6, 13, 13.6, 10.2);
+    var dew = M(13.6, 10.2) + Cc(18.5, 7, 24, 10, 25.6, 15.8) + Cc(26.6, 19.6, 25, 23.6, 22.4, 26.5);
+    var region = bub + Cc(18.5, 7, 24, 10, 25.6, 15.8) + Cc(26.6, 19.6, 25, 23.6, 22.4, 26.5) + 'h ';
+    var star = function (cx, cy, R, w) {
+      return M(cx, cy - R) + Q(cx + w, cy - w, cx + R, cy) + Q(cx + w, cy + w, cx, cy + R) +
+        Q(cx - w, cy + w, cx - R, cy) + Q(cx - w, cy - w, cx, cy - R) + 'h ';
+    };
+    var ops = 'q ' + n2(k) + ' 0 0 ' + n2(-k) + ' ' + n2(x) + ' ' + n2(PAGE_H - y) + ' cm ';
+    ops += rgb(col.tile) + ' rg ' + tile + 'f ';
+    ops += rgb(col.region) + ' rg ' + region + 'f ';
+    ops += '1 J 2.3 w [] 0 d ' + rgb(col.bubble) + ' RG ' + bub + 'S ' + rgb(col.dew) + ' RG ' + dew + 'S 0 J ';
+    ops += rgb(col.spark) + ' rg ' + star(13.6, 10.2, 5.6, 0.7) + 'f ';
+    ops += rgb(col.spark2) + ' rg ' + star(24.6, 6.4, 2.2, 0.3) + 'f Q';
+    this.ops.push(ops);
   };
   PdfPage.prototype.clip = function (x, y, w, h) {
     this.ops.push('q ' + n2(x) + ' ' + n2(PAGE_H - y - h) + ' ' + n2(w) + ' ' + n2(h) + ' re W n');
@@ -886,9 +922,9 @@
 
     /* cover band */
     pg.rect(0, 0, PAGE_W, 118, { fill: C.accent });
-    pg.rect(MARGIN, 30, 22, 22, { fill: '#ffffff' });
-    pg.circle(MARGIN + 11, 44, 5.4, { fill: C.accent, stroke: C.accent, w: 0.1 });
-    pg.text(MARGIN + 32, 47, TOOL.toUpperCase(), { size: 8.5, font: 'B', color: '#cfe0f7' });
+    pg.mark(MARGIN, 28, 26, 'light');
+    pg.text(MARGIN + 34, 40, 'PhaseWiz', { size: 12, font: 'B', color: '#ffffff' });
+    pg.text(MARGIN + 34, 52, 'BLACK-OIL PVT GENERATOR', { size: 7.5, font: 'B', color: '#cfe0f7' });
     pg.text(MARGIN, 82, o.title, { size: 22, font: 'B', color: '#ffffff' });
     pg.text(MARGIN, 102, (o.project ? o.project + '  ·  ' : '') + fluidLabel(model) + ' – black-oil PVT model', { size: 10.5, color: '#e3edfb' });
     var meta = [['Date', dateText(o.now)], ['Units', o.units === 'metric' ? 'Metric' : 'Field'],

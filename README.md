@@ -1,4 +1,8 @@
-# Black-Oil PVT Generator
+<img src="pvt/favicon.svg" width="72" height="72" alt="PhaseWiz logo" align="right">
+
+# PhaseWiz
+
+**Black-Oil PVT Generator**
 
 **© 2026 Ankaj Kumar Sinha** &middot; MIT licence
 
@@ -122,6 +126,10 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 ```
 
 ## What's new
+
+**1.7.0 (2026-11-05)** &mdash; the tool is now **PhaseWiz**, with a new logo: a
+phase envelope with a spark at the critical point. Deck, CSV, JSON, PDF and
+project-file headers carry the new name.
 
 **1.6.1 (2026-10-17)** &mdash; the PDF report gets its own Download PDF report
 button in the Export tab, outside the Format list.
