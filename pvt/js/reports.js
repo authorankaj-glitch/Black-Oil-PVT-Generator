@@ -1,6 +1,6 @@
 /*
  * PhaseWiz - Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * reports.js -- raw PVT laboratory tests: quality control, corrections and
  * the finalised data set that the correlation tuning uses.
@@ -1116,7 +1116,7 @@
 
   var TEMPLATE = [
     '# PhaseWiz (Black-Oil PVT Generator) - PVT report import template',
-    '# Copyright (c) 2026 Ankaj Kumar Sinha - MIT licence',
+    '# Copyright (c) 2026 Ankaj Kumar Sinha - PolyForm Noncommercial License 1.0.0',
     '# Field units. One file per report; lines starting with # are ignored, as are header rows.',
     '# Save from a spreadsheet as CSV (comma, semicolon or tab separated). Leave a cell empty if not measured.',
     '[report]',

@@ -14,7 +14,7 @@
   'use strict';
 
   /* Printed in every deck and file header. */
-  var COPYRIGHT = 'Copyright (c) 2026 Ankaj Kumar Sinha - MIT licence - https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator';
+  var COPYRIGHT = 'Copyright (c) 2026 Ankaj Kumar Sinha - PolyForm Noncommercial License 1.0.0 - https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator';
 
   var K = {
     PSI_BAR: 0.0689475729,        /* psi   -> bar      */

@@ -9,6 +9,12 @@ decks; a major version would change them.
 ## 1.7.0 &mdash; 2026-11-05 &middot; PhaseWiz
 
 **Changed**
+- **Licence**: the code is now under the **PolyForm Noncommercial License
+  1.0.0** (previously MIT): free for noncommercial use, a separate licence for
+  commercial use. The licence line in the page footer, the Method tab, every
+  source header, the report templates and the headers of decks, CSV/JSON
+  exports, project files and the PDF report follow it. Copies obtained under
+  earlier MIT releases keep the MIT terms.
 - The tool is renamed **PhaseWiz**, with "Black-Oil PVT Generator" kept as
   its subtitle. The page title, header, Method tab, report templates and the
   headers of the ECLIPSE, CMG, CSV and JSON exports, project files and the PDF

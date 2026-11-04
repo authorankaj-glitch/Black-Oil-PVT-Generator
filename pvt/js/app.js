@@ -1,6 +1,6 @@
 /*
  * PhaseWiz - Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * app.js -- UI wiring for the PVT generator.
  *

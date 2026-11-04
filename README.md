@@ -4,7 +4,7 @@
 
 **Black-Oil PVT Generator**
 
-**© 2026 Ankaj Kumar Sinha** &middot; MIT licence
+**© 2026 Ankaj Kumar Sinha** &middot; [PolyForm Noncommercial 1.0.0](LICENSE)
 
 An interactive, dependency-free PVT generator for **oil reservoirs** and **gas
 reservoirs** (dry gas and wet gas), plus formation water &mdash; built for field
@@ -128,7 +128,8 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 ## What's new
 
 **1.7.0 (2026-11-05)** &mdash; the tool is now **PhaseWiz**, with a new logo: a
-phase envelope with a spark at the critical point. Deck, CSV, JSON, PDF and
+phase envelope with a spark at the critical point, and the licence is now
+PolyForm Noncommercial 1.0.0. Deck, CSV, JSON, PDF and
 project-file headers carry the new name.
 
 **1.6.1 (2026-10-17)** &mdash; the PDF report gets its own Download PDF report
@@ -178,5 +179,19 @@ a broken correlation cannot reach the live page.
 
 ## License
 
-Copyright &copy; 2026 Ankaj Kumar Sinha. [MIT](LICENSE). The correlations themselves are published science, cited in
-[pvt/README.md](pvt/README.md); this license covers the implementation.
+Copyright &copy; 2026 Ankaj Kumar Sinha. Licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
+
+* **Free for noncommercial use** &mdash; personal study, research,
+  teaching, hobby projects, and use by charities, educational and research
+  institutions, public bodies and other noncommercial organisations.
+* **Commercial use** &mdash; including use in a company's paid work for
+  clients or its own operations &mdash; needs a separate licence. Contact the
+  author through GitHub ([@authorankaj-glitch](https://github.com/authorankaj-glitch)).
+* Copies and derived works must carry the licence terms (or their URL) and the
+  `Required Notice:` line at the top of [`LICENSE`](LICENSE).
+
+Releases up to and including 1.6.1 were published under the MIT licence, and
+copies obtained under it keep those terms. The correlations themselves are
+published science, cited in [pvt/README.md](pvt/README.md); the licence covers
+the implementation.

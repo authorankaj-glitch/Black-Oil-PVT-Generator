@@ -1,6 +1,6 @@
 /*
  * PhaseWiz - Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * report-pdf.js -- a PDF report of the current PVT model: an executive
  * summary, the key results, the inputs and correlations, the quality checks,
@@ -34,7 +34,7 @@
 
   var TOOL = 'PhaseWiz - Black-Oil PVT Generator';
   var AUTHOR = 'Ankaj Kumar Sinha';
-  var COPYRIGHT = '© 2026 Ankaj Kumar Sinha · MIT licence · github.com/authorankaj-glitch/Black-Oil-PVT-Generator';
+  var COPYRIGHT = '© 2026 Ankaj Kumar Sinha · PolyForm Noncommercial 1.0.0 · github.com/authorankaj-glitch/Black-Oil-PVT-Generator';
 
   /* ================================================================ *
    * Units: the model is in field units; the report shows either system

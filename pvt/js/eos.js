@@ -1,6 +1,6 @@
 /*
  * PhaseWiz - Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * eos.js -- a small Peng-Robinson equation of state for drawing the
  * pressure-temperature phase envelope of a measured composition.

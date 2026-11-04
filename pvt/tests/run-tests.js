@@ -800,7 +800,7 @@ section('23. Project files and credits');
            /Copyright \(c\) 2026 Ankaj Kumar Sinha/.test(E.generate(g, f, 'field'));
   }));
   var js = JSON.parse(E.generate(m, 'json', 'field'));
-  ok('JSON export names the generator and its author', js.generator === 'PhaseWiz (Black-Oil PVT Generator)' && /Ankaj Kumar Sinha/.test(js.copyright) && js.pb > 0);
+  ok('JSON export names the generator and its author', js.generator === 'PhaseWiz (Black-Oil PVT Generator)' && /Ankaj Kumar Sinha/.test(js.copyright) && /PolyForm Noncommercial License 1\.0\.0/.test(js.copyright) && js.pb > 0);
 })();
 
 section('24. PVT reports: import, QC and the separator correction');
