@@ -883,6 +883,18 @@ section('24. PVT reports: import, QC and the separator correction');
   ok('project files carry the reports', pk.reports.list.length === 1 && pk.reports.pick === rep.id);
 })();
 
+/* Releases: every script and stylesheet the page loads carries the release
+   number of the footer, so a browser cannot keep last release's files */
+(function () {
+  section('Release cache-busting');
+  var html = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
+  var foot = (html.match(/>v(\d+\.\d+\.\d+) &ndash; what/) || [])[1];
+  var refs = html.match(/(?:src|href)="(?:js|css)\/[^"]+"/g) || [];
+  ok('footer states the release', !!foot);
+  ok('every script and stylesheet is tagged ?v=' + foot, refs.length >= 15 &&
+     refs.every(function (r) { return r.indexOf('?v=' + foot + '"') > 0; }), refs.filter(function (r) { return r.indexOf('?v=' + foot + '"') < 0; }).join(' '));
+})();
+
 /* PDF report: a valid file, the sections asked for, both fluids and unit systems */
 (function () {
   section('PDF report');
