@@ -914,6 +914,24 @@
     };
   }
 
+  /* The page footer: credit on the left, page number on the right. The
+     credit drops its least important parts until it clears the page number
+     by FOOT_GAP points, so the two never overlap whatever the page count. */
+  var FOOT_SIZE = 7, FOOT_GAP = 14;
+  function footerText(pageLabel) {
+    var room = CW - textWidth(pageLabel, FOOT_SIZE) - FOOT_GAP;
+    var options = [
+      ['PhaseWiz', '© 2026 Ankaj Kumar Sinha', 'PolyForm Noncommercial 1.0.0', 'github.com/authorankaj-glitch/Black-Oil-PVT-Generator'],
+      ['PhaseWiz', '© 2026 Ankaj Kumar Sinha', 'PolyForm Noncommercial 1.0.0'],
+      ['PhaseWiz', '© 2026 Ankaj Kumar Sinha']
+    ];
+    for (var i = 0; i < options.length; i++) {
+      var t = options[i].join(' · ');
+      if (textWidth(t, FOOT_SIZE) <= room) return t;
+    }
+    return options[options.length - 1].join(' · ');
+  }
+
   /* ---------------- the report ---------------- */
   function build(model, options) {
     var o = withDefaults(options), U = unitSet(o), doc = new PdfDoc();
@@ -1011,8 +1029,9 @@
     var n = doc.pages.length;
     doc.pages.forEach(function (p, k) {
       p.line(MARGIN, PAGE_H - 36, PAGE_W - MARGIN, PAGE_H - 36, { color: C.rule, w: 0.5 });
-      p.text(MARGIN, PAGE_H - 24, TOOL + ' · ' + COPYRIGHT, { size: 7, color: C.muted });
-      p.text(PAGE_W - MARGIN, PAGE_H - 24, 'Page ' + (k + 1) + ' of ' + n, { size: 7, color: C.muted, align: 'right' });
+      var pageLabel = 'Page ' + (k + 1) + ' of ' + n;
+      p.text(MARGIN, PAGE_H - 24, footerText(pageLabel), { size: FOOT_SIZE, color: C.muted });
+      p.text(PAGE_W - MARGIN, PAGE_H - 24, pageLabel, { size: FOOT_SIZE, color: C.muted, align: 'right' });
     });
 
     return doc.toBytes({
@@ -1066,6 +1085,7 @@
     return base.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') + '.pdf';
   }
 
-  return { build: build, summary: summary, outline: outline, filename: filename,
+  return {
+    footerText: footerText, FOOT_SIZE: FOOT_SIZE, FOOT_GAP: FOOT_GAP, CONTENT_W: CW, build: build, summary: summary, outline: outline, filename: filename,
            textWidth: textWidth, wrap: wrap, encode: encode };
 });

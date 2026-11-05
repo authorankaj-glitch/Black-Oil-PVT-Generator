@@ -929,6 +929,10 @@ section('24. PVT reports: import, QC and the separator correction');
   var gas = M.build({ fluid: 'gas', gasKind: 'wet', gammaG: 0.68, tempF: 230, cgr: 12, apiC: 58, pMin: 200, pMax: 6000, salinity: 3 });
   var g = asText(RE.build(gas, { units: 'metric', now: when }));
   ok('gas report builds, in metric units', /Wet gas reservoir/.test(g) && /bara/.test(g) && /%%EOF/.test(g));
+  ok('the page footer clears the page number, even on a long report',
+     ['Page 1 of 5', 'Page 12 of 99', 'Page 100 of 100'].every(function (pl) {
+       return RE.textWidth(RE.footerText(pl), RE.FOOT_SIZE) + RE.textWidth(pl, RE.FOOT_SIZE) + RE.FOOT_GAP <= RE.CONTENT_W + 1e-9;
+     }) && /PolyForm Noncommercial 1\.0\.0/.test(RE.footerText('Page 1 of 5')) && /Ankaj Kumar Sinha/.test(RE.footerText('Page 100 of 100')));
   ok('report file name follows the project name', RE.filename(oil, { project: 'Field X / North' }) === 'Field_X_North_report.pdf' &&
      RE.filename(oil, {}) === 'PVT_report.pdf');
 })();

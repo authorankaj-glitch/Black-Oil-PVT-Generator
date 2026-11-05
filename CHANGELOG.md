@@ -6,6 +6,17 @@ Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
 
+## 1.7.2 &mdash; 2026-11-05 &middot; PDF footer
+
+**Fixed**
+- The PDF report footer ran into the page number. The footer now reads
+  "PhaseWiz · © 2026 Ankaj Kumar Sinha · PolyForm Noncommercial 1.0.0 ·
+  github.com/…" and drops the link, then the licence, if it would come
+  within 14 pt of the page number. A test checks the clearance up to
+  "Page 100 of 100".
+
+Tests: 280 checks.
+
 ## 1.7.1 &mdash; 2026-11-05 &middot; Fresh files after an update
 
 **Fixed**
