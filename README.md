@@ -127,6 +127,9 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 
 ## What's new
 
+**1.7.1 (2026-11-05)** &mdash; a browser now always loads the current release
+instead of last release's cached scripts.
+
 **1.7.0 (2026-11-05)** &mdash; the tool is now **PhaseWiz**, with a new logo: a
 phase envelope with a spark at the critical point, and the licence is now
 PolyForm Noncommercial 1.0.0. Deck, CSV, JSON, PDF and
@@ -157,7 +160,7 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-277 checks: reference values for every correlation, the physical invariants a
+279 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis

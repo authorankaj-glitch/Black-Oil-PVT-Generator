@@ -6,6 +6,17 @@ Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
 
+## 1.7.1 &mdash; 2026-11-05 &middot; Fresh files after an update
+
+**Fixed**
+- After an update a browser could keep last release's scripts from its cache,
+  so the page or the PDF report still showed the old name and licence. Every
+  script and stylesheet now carries the release number (`?v=1.7.1`), so a new
+  release is always fetched afresh. A test checks the tags match the footer
+  version.
+
+Tests: 279 checks.
+
 ## 1.7.0 &mdash; 2026-11-05 &middot; PhaseWiz
 
 **Changed**
