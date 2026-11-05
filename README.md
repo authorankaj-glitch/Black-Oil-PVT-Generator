@@ -127,6 +127,9 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 
 ## What's new
 
+**1.7.2 (2026-11-05)** &mdash; the PDF report footer no longer runs into the
+page number.
+
 **1.7.1 (2026-11-05)** &mdash; a browser now always loads the current release
 instead of last release's cached scripts.
 
@@ -160,7 +163,7 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-279 checks: reference values for every correlation, the physical invariants a
+280 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis

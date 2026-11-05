@@ -487,7 +487,7 @@ console.log(Exp.cmg(tuned, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-279 checks covering reference values for each correlation, the physical
+280 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
