@@ -1,10 +1,31 @@
 # Changelog
 
-Major updates to the Black-Oil PVT Generator, newest first. Each entry says what
+Major updates to PhaseWiz (the Black-Oil PVT Generator), newest first. Each entry says what
 a user can now do and what changed in the results or the files the tool writes.
 Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
+
+## 1.7.0 &mdash; 2026-11-05 &middot; PhaseWiz
+
+**Changed**
+- **Licence**: the code is now under the **PolyForm Noncommercial License
+  1.0.0** (previously MIT): free for noncommercial use, a separate licence for
+  commercial use. The licence line in the page footer, the Method tab, every
+  source header, the report templates and the headers of decks, CSV/JSON
+  exports, project files and the PDF report follow it. Copies obtained under
+  earlier MIT releases keep the MIT terms.
+- The tool is renamed **PhaseWiz**, with "Black-Oil PVT Generator" kept as
+  its subtitle. The page title, header, Method tab, report templates and the
+  headers of the ECLIPSE, CMG, CSV and JSON exports, project files and the PDF
+  report carry the new name.
+- **New logo**: a phase envelope (bubble line, dew line and the two-phase
+  region) with a spark at the critical point. It is also the browser-tab icon
+  (`pvt/favicon.svg`) and is drawn on the PDF report cover.
+- Saved projects, imported reports and earlier decks are unaffected: nothing
+  reads the name back.
+
+Tests: 277 checks.
 
 ## 1.6.1 &mdash; 2026-10-17 &middot; PDF report button
 

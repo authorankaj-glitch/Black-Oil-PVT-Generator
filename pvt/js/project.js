@@ -1,6 +1,6 @@
 /*
- * Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * PhaseWiz - Black-Oil PVT Generator
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * project.js -- save a whole working session to a file and read it back.
  *
@@ -34,8 +34,8 @@
 
   var KIND = 'pvt-project';
   var VERSION = 1;
-  var APP = 'Black-Oil PVT Generator';
-  var COPYRIGHT = 'Copyright (c) 2026 Ankaj Kumar Sinha - MIT licence';
+  var APP = 'PhaseWiz (Black-Oil PVT Generator)';
+  var COPYRIGHT = 'Copyright (c) 2026 Ankaj Kumar Sinha - PolyForm Noncommercial License 1.0.0';
 
   function isObj(o) { return o !== null && typeof o === 'object' && !Array.isArray(o); }
   function pick(v, allowed, dflt) { return allowed.indexOf(v) >= 0 ? v : dflt; }

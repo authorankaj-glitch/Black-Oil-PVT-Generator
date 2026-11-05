@@ -1,4 +1,6 @@
-# Black-Oil PVT Generator
+<img src="favicon.svg" width="64" height="64" alt="PhaseWiz logo" align="right">
+
+# PhaseWiz &ndash; Black-Oil PVT Generator
 
 An interactive, dependency-free web page that builds a complete black-oil PVT
 model from routine field inputs and exports it in the formats reservoir
@@ -439,6 +441,7 @@ like the rest of the page.
 ```
 pvt/
   index.html            page structure
+  favicon.svg           the PhaseWiz logo (also the browser-tab icon)
   css/app.css           tokens, layout, chart chrome (light + dark)
   js/correlations.js    the correlation library (pure functions)
   js/pvt-model.js       model assembly: grids, branches, tuning multipliers, QC

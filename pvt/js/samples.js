@@ -1,6 +1,6 @@
 /*
- * Black-Oil PVT Generator
- * Copyright (c) 2026 Ankaj Kumar Sinha. MIT licence (see LICENSE).
+ * PhaseWiz - Black-Oil PVT Generator
+ * Copyright (c) 2026 Ankaj Kumar Sinha. PolyForm Noncommercial License 1.0.0 (see LICENSE).
  *
  * samples.js -- screening of several PVT reports from one reservoir, and a
  * field-wide regression of the correlations against the samples that pass.
