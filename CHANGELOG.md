@@ -6,6 +6,149 @@ Version numbers follow [semantic versioning](https://semver.org): a minor
 version adds functionality without breaking saved cases, project files or
 decks; a major version would change them.
 
+## 1.8.0 &mdash; 2026-11-22 &middot; Recovery screening and mud contamination
+
+### Recovery screening
+
+A new **Recovery** tab estimates recovery factors from the PVT model, with a
+few rock properties that start at typical defaults and can each be
+overridden. It is a screening tool: not a reserves or resources estimate
+(SPE-PRMS) and not a simulation forecast &mdash; there is no geology, well, rate
+or time, and the tab, the PDF section and the CSV all say so.
+
+**New**
+- **Oil reservoirs**: expansion from the initial pressure to the bubble point
+  (material balance with water and rock compressibility); **solution-gas
+  drive** to abandonment by the Muskat (1945) tank method, with recovery,
+  producing GOR and gas saturation against pressure; **water drive** as a
+  Buckley&ndash;Leverett displacement efficiency with the Welge tangent,
+  fractional-flow and water-cut curves (complete sweep: field recovery is this
+  times the sweep efficiency); the **API (Arps et al., 1967)** solution-gas and
+  water-drive correlations as an indicative cross-check.
+- **Gas reservoirs**: volumetric depletion from p/z and water drive with
+  trapped gas.
+- **Default rock inputs, overridable**: Swi, rock compressibility,
+  abandonment and water-drive pressures, critical and residual saturations,
+  Corey exponents and end points, economic water cut, and porosity and
+  permeability for the API check. Every result marks each input it uses as
+  *default* or *entered*.
+- **Visualisation**: a recovery-by-mechanism summary with bars and shaded
+  sensitivity ranges (each input still at its default moved across a typical
+  range); recovery against pressure with its sensitivity band and the Pi, Pb
+  and abandonment markers; producing GOR and saturations against pressure;
+  fractional flow with the Welge tangent; water cut against displacement
+  efficiency; gas-oil and water-oil relative permeability; p/z against gas
+  recovered.
+- **Basis of every estimate**: method and reference, the PVT values used, the
+  rock inputs with their source, and the assumptions; a "How recovery is
+  estimated" section on the Method tab.
+- A **Recovery screening** section in the PDF report (on by default, a box in
+  Export), a CSV download of the curves with the basis in its header, and the
+  inputs saved with the project.
+- Charts can draw shaded bands and several pressure markers.
+
+### Samples tab: comparing PVT reports
+
+A new **Samples** tab (shown with laboratory data, beside PVT reports & QC)
+puts the accepted reports of the fluid system side by side for reference.
+Reports not yet accepted, or failing QC, can be added with a tick; each
+sample can be hidden with a click and keeps its colour across every view.
+
+- **Compositions**: grouped bars of the reservoir-fluid composition by
+  component (linear or logarithmic), the stock-tank oil by carbon number where
+  a report carries one, and C1 against C7+.
+- **Key properties**: depth, reservoir pressure and temperature, Pb, Rsb, API,
+  Bob, μob, μod, gas gravity, C1, C7+ and its MW and SG, mud filtrate (oil);
+  gas gravity, CGR, condensate API, z and μg at reservoir pressure (gas).
+- **Finalised data against pressure**: Rs, Bo, μo and z (oil), z and μg
+  (gas), one curve per sample, linked to the pressure cursor.
+- **Phase envelopes** from each composition (Peng-Robinson, matched to each
+  report's bubble point for oil), with reservoir conditions marked; computed
+  one at a time so the tab stays responsive.
+- **Trends**: Pb, Rsb and API against depth and Pb against Rsb (oil); CGR,
+  methane and gas gravity against depth (gas), with a least-squares line and
+  the samples more than two standard deviations off it named.
+- **In the PDF report**: a *Sample comparison* section (on by default, a box
+  in Export) with the same samples, ticks and colours: key-properties table,
+  composition table and grouped bars, the curves against pressure, phase
+  envelopes with reservoir conditions, and the trend charts with outliers
+  named. Chart legends in the PDF wrap onto a second line when needed.
+- New module `js/compare.js`.
+
+### Linked chart tracking
+
+- Every chart against pressure tracks together: hovering one puts the
+  crosshair and the readout at the same pressure on all the others, on the
+  Summary and Charts tabs (and the correlation-spread and lab-match charts),
+  and moves the pressure cursor, the barrel and the phase diagram with it.
+  At rest every crosshair sits at the pressure cursor, including after a tab
+  switch or a resize.
+
+### Oil and water colour scheme
+
+The web page and the PDF report share a new colour scheme: a navy brand bar
+with orange kept for actions and focus (primary button, active tab, focus
+ring, bubble-point row), a readable darker orange for orange text and links,
+and blue for information notices so orange never looks like a warning. Chart
+colours are unchanged. Secondary and muted text is darker (and lighter in
+dark mode) so hints, units and descriptions stay legible at full screen
+brightness, meeting WCAG AA contrast.
+
+### Oil-based mud contamination
+
+An oil sample drilled with oil-based mud can now be taken back to the clean
+reservoir oil before it is checked, finalised and used for tuning.
+
+**New**
+- A **Mud contamination** test on every oil report: the stock-tank oil
+  composition by carbon number (wt %) and, when analysed, the mud filtrate
+  (base oil); filtrate specific gravity, viscosity and volume factor at
+  reservoir temperature; the carbon numbers to fit from and, optionally, the
+  filtrate range. Paste it from a spreadsheet or import it as a `[mud]`
+  section (the report template has one).
+- Two ways to **estimate the contamination**, both computed when the data
+  allow:
+  - **skimming** &mdash; the clean C8+ trend is a straight line of
+    ln(mol fraction) against carbon number; the excess above it in the
+    filtrate range is the filtrate (range from the filtrate composition, set by
+    hand, or found automatically);
+  - **subtraction** &mdash; the filtrate composition is removed in the
+    proportion that makes the cleaned profile straightest.
+  Automatic choice: subtraction when the filtrate is entered, else skimming.
+- **Corrections** to the finalised data: R<sub>s</sub> &divide; (1 &minus; v<sub>F</sub>),
+  B<sub>o</sub> = (B<sub>o</sub> &minus; v<sub>F</sub>B<sub>F</sub>)/(1 &minus; v<sub>F</sub>),
+  stock-tank gravity by volume mixing, dead-oil viscosity by Arrhenius blending
+  (live viscosities scaled with it), and the **clean bubble point** from a
+  Peng&ndash;Robinson flash of the cleaned composition (C1&ndash;C7+
+  interaction regressed to the measured P<sub>b</sub>) or the Standing ratio.
+  Saturated rows are stretched to the clean bubble point, undersaturated rows
+  shifted; gas z and viscosity stay at their measured pressures.
+- **Three new checks**: contamination level (under 5 wt % pass, 5&ndash;10 wt %
+  warning, above 10 wt % fail), straightness of the clean trend, and skimming
+  against subtraction.
+- **Two QC charts**: the stock-tank oil on the semi-log carbon-number plot with
+  the clean trend, the cleaned points and the filtrate share; and the
+  subtraction misfit against the contamination tried.
+- A before/after table (contaminated sample against clean oil) and a
+  mud-filtrate tile in the finalised data.
+- A fourth example report, an MDT sample with 7 wt % filtrate.
+- New dependency-free module `js/contamination.js`.
+
+**Changed**
+- The Bo / Rs consistency check interpolates gas z where a row has none of its
+  own.
+- Reports saved before this version reopen unchanged (no mud data, nothing
+  corrected).
+
+**Limitations**
+- One homologous filtrate cut and ideal mixing are assumed; ester or olefin
+  muds and naturally curved carbon-number profiles weaken the estimate. Gas
+  reports are not corrected.
+
+**Tests**: 336 checks (56 new), including the gas material balance of the
+Muskat tank, piston-like Buckley&ndash;Leverett displacement, exact p/z recovery
+and recovery of a known filtrate share by both contamination methods.
+
 ## 1.7.2 &mdash; 2026-11-05 &middot; PDF footer
 
 **Fixed**

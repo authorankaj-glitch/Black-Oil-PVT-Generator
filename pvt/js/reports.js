@@ -28,6 +28,11 @@
  *     sep:   { tests: [{ name, api, bofb, stages: [{ p, t, gor, gg }] }], pick }
  *            stage GOR in scf / STB; the last stage is the stock tank
  *     visc:  { rows: [{ p, muo, mug, use }], muod }
+ *     mud:   { rows: [{ n, w, f, use }], method, apply, pbFrom, sgF, muF, bF,
+ *              fitFrom, winFrom, winTo, plus }
+ *            stock-tank oil (w) and mud filtrate (f) weight per cent by
+ *            carbon number, for oil-based mud contamination
+ *            (contamination.js)
  *     settings: { method: 'amyx' | 'ratio' | 'none',
  *                 pbSource: 'cce' | 'dl' | 'report',
  *                 smoothCce: bool, normalise: bool }
@@ -58,6 +63,11 @@
  *              (Hoffman, Crump and Hocott, 1953): separator equilibrium
  *   viscTrend  oil viscosity falls to Pb and rises above it, no point out
  *              of line, dead oil the most viscous
+ *   mudLevel   oil-based mud filtrate in the stock-tank oil: under 5 wt %
+ *              pass, 5 - 10 wt % warning, above 10 wt % fail
+ *   mudFit     the clean C8+ trend the contamination is measured against is
+ *              a straight line on the semi-log plot
+ *   mudAgree   skimming and subtraction agree (when the filtrate is known)
  *   ineq       the finalised Bo and Rs satisfy dBo/dp < Bg dRs/dp below Pb
  *              (a positive total compressibility, which simulators need)
  *
@@ -71,12 +81,16 @@
  *   Above Pb: Bo = (V/Vsat) Bofb, optionally from the fitted (smoothed)
  *   undersaturated volume curve; Rs = Rsfb.
  *   Composition normalised to 100 mol %.
+ *   Mud contamination (when a stock-tank oil composition by carbon number
+ *   is entered and the correction is on): Rs, Bo, API, bubble point and
+ *   viscosities are taken back to the clean oil (contamination.js), after
+ *   the separator correction and before the tuning sees them.
  *   Rows the engineer unticks are left out of every check and the result.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./eos.js'));
-  else root.PVTReports = factory(root.PVTEos);
-})(typeof self !== 'undefined' ? self : this, function (Eos) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./eos.js'), require('./contamination.js'));
+  else root.PVTReports = factory(root.PVTEos, root.PVTMud);
+})(typeof self !== 'undefined' ? self : this, function (Eos, Mud) {
   'use strict';
 
   var CHECKS = [
@@ -96,6 +110,9 @@
     { key: 'compPb', label: 'Bubble point from the composition', test: 'comp' },
     { key: 'hoffman', label: 'Hoffman plot of the separator', test: 'comp' },
     { key: 'viscTrend', label: 'Viscosity trends', test: 'visc' },
+    { key: 'mudLevel', label: 'Mud filtrate in the stock-tank oil', test: 'mud' },
+    { key: 'mudFit', label: 'Clean carbon-number trend', test: 'mud' },
+    { key: 'mudAgree', label: 'Skimming against subtraction', test: 'mud' },
     { key: 'ineq', label: 'Bo / Rs thermodynamic consistency', test: 'final' }
   ];
   var RANK = { na: 0, pass: 1, warn: 2, fail: 3 };
@@ -140,7 +157,9 @@
     visc: [{ k: 'p', kind: 'p', head: 'Pressure' }, { k: 'muo', kind: 'mu', head: 'Oil viscosity' },
            { k: 'mug', kind: 'mu', head: 'Gas viscosity' }],
     comp: [{ k: 'c', text: true, head: 'Component' }, { k: 'z', kind: null, unit: 'mol %', head: 'Reservoir fluid' },
-           { k: 'y', kind: null, unit: 'mol %', head: 'Separator gas' }, { k: 'x', kind: null, unit: 'mol %', head: 'Separator liquid' }]
+           { k: 'y', kind: null, unit: 'mol %', head: 'Separator gas' }, { k: 'x', kind: null, unit: 'mol %', head: 'Separator liquid' }],
+    mud: [{ k: 'n', cn: true, kind: null, unit: 'C', head: 'Carbon number' }, { k: 'w', kind: null, unit: 'wt %', head: 'Stock-tank oil' },
+          { k: 'f', kind: null, unit: 'wt %', head: 'Mud filtrate' }]
   };
 
   /* ------------------------------------------------------------ helpers */
@@ -208,6 +227,7 @@
       dl: { rows: [], apiResidual: null },
       sep: { tests: [emptySepTest()], pick: 0 },
       visc: { rows: [], muod: null },
+      mud: Mud ? Mud.emptyMud() : { rows: [] },
       settings: { method: 'amyx', pbSource: 'cce', smoothCce: false, normalise: true },
       final: false
     };
@@ -253,6 +273,7 @@
     r.sep.pick = Math.min(Math.max(0, parseInt(sp.pick, 10) || 0), r.sep.tests.length - 1);
     r.visc.rows = cleanRows((o.visc || {}).rows, ['p', 'muo', 'mug']);
     r.visc.muod = num((o.visc || {}).muod);
+    if (Mud) r.mud = Mud.cleanMud(o.mud);
     var st = o.settings || {};
     r.settings = {
       method: ['amyx', 'ratio', 'none'].indexOf(st.method) >= 0 ? st.method : 'amyx',
@@ -818,17 +839,29 @@
 
     /* ---- finalised data: Bo / Rs consistency below Pb */
     var fin = finalise(rep);
+    if (Mud) Mud.checks(rep.mud, fin.mudEst).forEach(function (c) { out.push(check(c.key, c.status, c.detail, c.value !== undefined ? { value: c.value } : null)); });
     var ineq = consistency(fin, rep.tempF);
     out.push(ineq);
 
     return { checks: out, flags: flags, pb: pick, pbCandidates: pbc, sep: sep, yFunc: yf, undersat: us,
-             density: dens, hoffman: sep ? hoffman(rep, sep.pSep, sep.tSep) : null, final: fin,
+             density: dens, hoffman: sep ? hoffman(rep, sep.pSep, sep.tSep) : null, final: fin, mud: fin.mudEst,
              status: worst(out.map(function (c) { return c.status; })) };
   }
 
   /* dBo/dp < Bg dRs/dp on the saturated branch of the finalised data. */
   function consistency(fin, tempF) {
-    var sat = (fin.rows || []).filter(function (r) { return fin.pb && r.p <= fin.pb * 1.001 && num(r.rs) !== null && num(r.bo) !== null && num(r.z) !== null; })
+    /* gas z where a row has none of its own (after a mud correction the
+       oil rows move to the clean bubble point while z stays where it was
+       measured): linear in pressure between the nearest z readings */
+    var zr = (fin.rows || []).filter(function (r) { return num(r.z) !== null; }).sort(function (a, b) { return a.p - b.p; });
+    var zAt = function (r) {
+      if (num(r.z) !== null) return r.z;
+      if (zr.length < 2 || r.p < zr[0].p || r.p > zr[zr.length - 1].p) return null;
+      for (var i = 1; i < zr.length; i++) if (r.p <= zr[i].p) return zr[i - 1].z + (zr[i].z - zr[i - 1].z) * (r.p - zr[i - 1].p) / (zr[i].p - zr[i - 1].p);
+      return null;
+    };
+    var sat = (fin.rows || []).filter(function (r) { return fin.pb && r.p <= fin.pb * 1.001 && num(r.rs) !== null && num(r.bo) !== null && zAt(r) !== null; })
+      .map(function (r) { return { p: r.p, rs: r.rs, bo: r.bo, z: zAt(r) }; })
       .sort(function (a, b) { return b.p - a.p; });
     if (sat.length < 2 || num(tempF) === null) return check('ineq', 'na', 'Needs finalised Rs, Bo and gas z on two or more saturated rows.');
     var bad = [];
@@ -938,7 +971,7 @@
     var api = sep && sep.api !== null ? sep.api : num(rep.dl.apiResidual);
     if (!(sep && sep.api !== null) && api !== null) notes.push('Oil gravity is the DL residual oil gravity (no stock-tank API).');
 
-    return {
+    var fin = {
       name: rep.name, type: rep.type, method: method, pb: pb, pbFrom: pick.from, muod: num(rep.visc.muod),
       fluid: { api: api, gammaG: gg, rsb: rsb, tempF: num(rep.tempF),
                pSepPsia: sep ? sep.pSep : null, tSepF: sep ? sep.tSep : null },
@@ -947,6 +980,15 @@
       rows: rows, notes: notes,
       ready: !!(api !== null && gg !== null && rsb !== null && num(rep.tempF) !== null && rows.length)
     };
+
+    /* oil-based mud filtrate: back to the clean oil */
+    var est = Mud ? Mud.estimate(rep.mud) : null;
+    if (est) {
+      var live = comp && comp.mw7 !== null && comp.sg7 !== null && comp.rows.some(function (q) { return q.c === 'C7+' && q.z > 0; }) ? comp : null;
+      fin = Mud.correct(fin, { mud: rep.mud, est: est, tempF: num(rep.tempF), composition: live, pRes: num(rep.sampling.pRes) });
+    }
+    fin.mudEst = est;
+    return fin;
   }
 
   /* The finalised data as a PVT sample (samples.js) or the one-report lab table. */
@@ -965,7 +1007,8 @@
 
   var SECTION = [
     [/^(report|info|general|sample)/, 'report'], [/^(cce|constant|ccs|flash\s*vap)/, 'cce'],
-    [/^(dl|differential|dv)/, 'dl'], [/^(sep|flash|separator)/, 'sep'], [/^(visc)/, 'visc'], [/^(comp)/, 'comp']
+    [/^(dl|differential|dv)/, 'dl'], [/^(sep|flash|separator)/, 'sep'], [/^(visc)/, 'visc'], [/^(comp)/, 'comp'],
+    [/^(mud|contam|obm|sbm|filtrate)/, 'mud']
   ];
   /* Most specific first: 'dead oil viscosity at Tres' is not a temperature,
      'reported bubble point' is not a name. */
@@ -1050,7 +1093,7 @@
         var hd = m[1].trim().toLowerCase();
         sec = null;
         SECTION.forEach(function (s) { if (!sec && s[0].test(hd)) sec = s[1]; });
-        if (!sec) throw new Error('Unknown section [' + m[1] + ']. Use [report], [cce], [dl], [separator], [viscosity] or [composition].');
+        if (!sec) throw new Error('Unknown section [' + m[1] + ']. Use [report], [cce], [dl], [separator], [viscosity], [composition] or [mud].');
         if (sec === 'sep') {
           var nm = m[1].split(':')[1];
           cur = emptySepTest(nm ? nm.trim() : 'Test ' + (rep.sep.tests.length + 1));
@@ -1085,6 +1128,20 @@
         }
         compRowsIn.push({ c: c, z: nums[1], y: nums[2], x: nums[3] });
         any = true;
+        return;
+      }
+      if (sec === 'mud') {
+        var mk = cells[0].toLowerCase(), cn = /^c?\s*(\d{1,2})\s*(\+|plus)?$/i.exec(cells[0]);
+        if (cn) {
+          rep.mud.rows.push({ n: +cn[1], w: nums[1], f: nums[2], use: true });
+          any = true;
+          return;
+        }
+        if (/sg|specific|gravity|density/.test(mk) && /filtrate|base|mud/.test(mk)) rep.mud.sgF = nums[1];
+        else if (/visc/.test(mk)) rep.mud.muF = nums[1];
+        else if (/fvf|volume factor|\bbf\b/.test(mk)) rep.mud.bF = nums[1];
+        else if (/fit/.test(mk) && nums[1] !== null) rep.mud.fitFrom = nums[1];
+        else if (/method/.test(mk)) rep.mud.method = /sub/i.test(cells[1]) ? 'subtract' : /skim/i.test(cells[1]) ? 'skim' : 'auto';
         return;
       }
       if (sec === 'sep') {
@@ -1167,18 +1224,53 @@
     'CO2,0.92,1.98,0.14',
     'C1,36.21,78.40,3.20',
     'C7+,32.40,0.05,52.10',
+    '',
+    '# Optional: oil-based mud contamination. Stock-tank oil and mud filtrate (base oil) by carbon number, wt %.',
+    '# The last row is taken as the plus fraction. Leave the filtrate column empty if it was not analysed.',
+    '[mud]',
+    'filtrate specific gravity,0.80',
+    'filtrate viscosity at Tres cp,1.1',
+    'method,auto   # auto / skimming / subtraction',
+    'carbon number,stock-tank oil wt%,mud filtrate wt%',
+    'C6,2.04,',
+    'C7,7.70,',
+    'C8,7.24,',
+    'C9,6.91,',
+    'C10,6.46,',
+    'C11,6.01,0.54',
+    'C12,5.64,2.04',
+    'C13,5.41,5.74',
+    'C14,5.36,12.02',
+    'C15,5.37,18.74',
+    'C16,5.16,21.73',
+    'C17,4.60,18.74',
+    'C18,3.83,12.02',
+    'C19,3.09,5.74',
+    'C20,2.54,2.04',
+    'C21,2.19,0.54',
+    'C22,1.89,0.11',
+    'C23,1.65,0.02',
+    'C24,1.45,',
+    'C25,1.27,',
+    'C26,1.11,',
+    'C27,0.96,',
+    'C28,0.84,',
+    'C29,0.73,',
+    'C30+,10.58,',
+
     ''
   ].join('\n');
 
   /* ------------------------------------------------------------ example reports */
 
-  /* Three reports built from a correlation fluid with a known DL /
+  /* Four reports built from a correlation fluid with a known DL /
      separator relationship, so the corrections can be checked: a sound
      bottomhole study, a repeat study with textbook faults (a DL density
      typo, a CCE reading off the Y-function, a viscosity reading out of
      line, a composition that does not add up, a separator-liquid analysis
      off the Hoffman line, a reported Pb 2.5 % high), and a separator
-     recombination with two separator tests. Model is pvt-model.js. */
+     recombination with two separator tests, and a sample carrying
+     oil-based mud filtrate. Model is pvt-model.js. */
   function demoReports(Model) {
     function make(o) {
       var gSep = o.stages.reduce(function (a, s) { return a + s[2] * s[3]; }, 0) / o.stages.reduce(function (a, s) { return a + s[2]; }, 0);
@@ -1291,7 +1383,37 @@
       sampling: { pRes: 4700, gor: 600 },
       comp: sepComp(Z3, 214, 0.859, 114.7, 80)
     }));
-    return [r1, r2, r3];
+    /* An MDT sample with 7 wt % oil-based mud filtrate in its stock-tank oil.
+       The clean oil (35.0 API, Rsb 720 scf/STB) is diluted by a C11 - C23
+       base oil of SG 0.80: the measured API, GOR and bubble point are those
+       of the contaminated fluid, which the mud correction takes back. */
+    var cMud = 0.07, sgF = 0.80, gClean = gammaO(35.0);
+    var gCont = 1 / ((1 - cMud) / gClean + cMud / sgF), vF = cMud / sgF * gCont;
+    var apiCont = +(141.5 / gCont - 131.5).toFixed(1), rsbCont = Math.round(720 * (1 - vF));
+    var r4 = make(ext(common, {
+      name: 'C-1 MDT (OBM contaminated)', type: 'bhs', api: apiCont, rsb: rsbCont, tempF: 195,
+      stages: [[114.7, 80, 0.86, 0.74], [14.7, 60, 0.14, 1.24]],
+      tests: [{ name: '100 psig / 80 °F', api: apiCont, boK: 1, rsK: 1, stages: [] }],
+      sampling: { pRes: 4900, pwf: 4300, gor: 720, depth: 9100 },
+      comp: sepComp(Z1, 214, 0.858, 114.7, 80)
+    }));
+    r4.mud = Mud ? Mud.cleanMud({ rows: demoMudRows(cMud), sgF: sgF, muF: 1.15 }) : r4.mud;
+    return [r1, r2, r3, r4];
+  }
+
+  /* Stock-tank oil by carbon number (wt %): an exponential C7+ profile with
+     a C30+ plus fraction, plus a share c of a bell-shaped C11 - C23 base oil. */
+  function demoMudRows(c) {
+    var w = {}, f = {}, sw = 0, sf = 0, n;
+    for (n = 7; n <= 29; n++) { w[n] = (Mud ? Mud.mwOf(n) : 14 * n - 4) * Math.exp(-0.17 * n); sw += w[n]; }
+    w[30] = 0.13 * sw; w[6] = 0.025 * sw; sw += w[30] + w[6];
+    for (n = 11; n <= 23; n++) { f[n] = Math.exp(-Math.pow((n - 16) / 2.6, 2)); sf += f[n]; }
+    var rows = [];
+    for (n = 6; n <= 30; n++) {
+      rows.push({ n: n, w: +((1 - c) * w[n] / sw * 100 + c * (f[n] || 0) / sf * 100).toFixed(3),
+                  f: f[n] ? +(f[n] / sf * 100).toFixed(2) : null });
+    }
+    return rows;
   }
 
   return {
@@ -1300,7 +1422,7 @@
     sepSummary: sepSummary, ccePb: ccePb, pbCandidates: pbCandidates, chosenPb: chosenPb,
     yFunction: yFunction, undersat: undersat, dlDensity: dlDensity, hoffman: hoffman, watsonK: watsonK,
     gasGravityFromComp: gasGravityFromComp, qcReport: qcReport, finalise: finalise, consistency: consistency,
-    toSample: toSample, parseReportText: parseReportText, demoReports: demoReports, bgBbl: bgBbl,
+    toSample: toSample, parseReportText: parseReportText, demoReports: demoReports, demoMudRows: demoMudRows, bgBbl: bgBbl,
     eosComposition: eosComposition,
     /* shared with gas-reports.js */
     util: { num: num, used: used, pct: pct, f0: f0, median: median, worst: worst, linFit: linFit, theilSen: theilSen,

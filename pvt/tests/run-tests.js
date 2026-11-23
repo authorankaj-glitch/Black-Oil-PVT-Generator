@@ -20,6 +20,9 @@ var RP = require('../js/reports.js');
 var GR = require('../js/gas-reports.js');
 var EO = require('../js/eos.js');
 var RE = require('../js/report-pdf.js');
+var MU = require('../js/contamination.js');
+var RC = require('../js/recovery.js');
+var CP = require('../js/compare.js');
 
 var pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -893,6 +896,171 @@ section('24. PVT reports: import, QC and the separator correction');
   ok('footer states the release', !!foot);
   ok('every script and stylesheet is tagged ?v=' + foot, refs.length >= 15 &&
      refs.every(function (r) { return r.indexOf('?v=' + foot + '"') > 0; }), refs.filter(function (r) { return r.indexOf('?v=' + foot + '"') < 0; }).join(' '));
+})();
+
+section('25. Oil-based mud contamination: skimming, subtraction and the clean oil');
+(function () {
+  /* synthetic stock-tank oil: exponential C7+ profile, C30+ plus fraction,
+     blended with a known share of a C11 - C23 base oil */
+  var clean = RP.demoMudRows(0), dirty = RP.demoMudRows(0.08);
+  var oilOnly = dirty.map(function (r) { return { n: r.n, w: r.w }; });
+  var sk = MU.skim({ rows: oilOnly }), sub = MU.subtract({ rows: dirty }), skF = MU.skim({ rows: dirty });
+  near('subtraction recovers a known 8 wt % contamination', sub.c, 0.08, 0.01);
+  ok('skimming recovers it within 0.5 wt %, filtrate range found by itself', Math.abs(sk.c - 0.08) <= 0.005 && sk.hump && sk.hump[0] <= 13 && sk.hump[1] >= 19,
+     (100 * sk.c).toFixed(2) + ' wt %, C' + (sk.hump || []).join('-C'));
+  ok('skimming with the filtrate range from the filtrate composition', Math.abs(skF.c - 0.08) <= 0.005 && skF.humpFrom === 'filtrate');
+  var sk0 = MU.skim({ rows: clean.map(function (r) { return { n: r.n, w: r.w }; }) }), sub0 = MU.subtract({ rows: clean.map(function (r, i) { return { n: r.n, w: r.w, f: dirty[i].f }; }) });
+  ok('a clean oil reads as clean by both methods', sk0.c < 0.002 && sub0.c < 0.002, sk0.c + ' ' + sub0.c);
+  var noisy = dirty.map(function (r, i) { return { n: r.n, w: r.w * (1 + 0.03 * Math.sin(7.3 * i)), f: r.f }; });
+  var skN = MU.skim({ rows: noisy.map(function (r) { return { n: r.n, w: r.w }; }) }), subN = MU.subtract({ rows: noisy });
+  ok('3 % analytical scatter moves either estimate by under 1 wt %', Math.abs(skN.c - 0.08) < 0.01 && Math.abs(subN.c - 0.08) < 0.01,
+     skN.c.toFixed(4) + ' ' + subN.c.toFixed(4));
+  ok('subtraction stops before a cleaned carbon number turns negative', sub.cMax > sub.c &&
+     sub.rows.every(function (r) { return r.wClean >= 0; }) && !sub.atLimit);
+  var skOut = MU.skim({ rows: oilOnly.map(function (r) { return r.n === 25 ? { n: 25, w: r.w * 3, use: false } : r; }) });
+  ok('an unticked bad reading stays out of the fit (it still counts in the total)', Math.abs(skOut.fit.b / sk.fit.b - 1) < 1e-3 &&
+     Math.abs(skOut.c * skOut.total / (sk.c * sk.total) - 1) < 0.01, skOut.fit.b + ' ' + sk.fit.b + ' ' + skOut.c);
+  var est = MU.estimate({ rows: dirty }), ch = MU.checks({ rows: dirty }, est);
+  var stOf = function (k) { return ch.filter(function (c) { return c.key === k; })[0].status; };
+  ok('8 wt % warns, the fit passes and the two methods agree', est.method === 'subtract' && stOf('mudLevel') === 'warn' &&
+     stOf('mudFit') === 'pass' && stOf('mudAgree') === 'pass');
+  ok('15 wt % fails the contamination level', MU.checks({ rows: RP.demoMudRows(0.15) }, MU.estimate({ rows: RP.demoMudRows(0.15) }))[0].status === 'fail');
+  ok('no carbon-number data: the sample is taken as clean', MU.estimate({ rows: [] }) === null && MU.checks({ rows: [] }, null)[0].status === 'na');
+
+  /* the correction of the finalised data */
+  var demo = RP.demoReports(M), r4 = demo[3], q = RP.qcReport(r4), fin = q.final, m = fin.mud;
+  ok('the contaminated example: corrected, consistent and only the contamination level warns', !!m &&
+     q.checks.filter(function (c) { return c.status !== 'pass'; }).map(function (c) { return c.key; }).join() === 'mudLevel',
+     JSON.stringify(q.checks.filter(function (c) { return c.status !== 'pass'; }).map(function (c) { return c.key; })));
+  near('volume fraction vF = c g_o / g_F', m.vF, m.c * (141.5 / (131.5 + m.before.api)) / 0.80, 1e-12);
+  near('Rsb of the clean oil = Rsb / (1 - vF)', m.after.rsb, m.before.rsb / (1 - m.vF), 1e-12);
+  near('Bob of the clean oil = (Bob - vF B_F) / (1 - vF)', m.after.bob, (m.before.bob - m.vF * m.bF) / (1 - m.vF), 1e-12);
+  near('the clean oil recovers the 35.0 API and Rsb 720 it was built from', m.after.api, 35.0, 0.003);
+  near('... and its Rsb', m.after.rsb, 720, 0.005);
+  ok('cleaning raises the bubble point (EOS flash) and the Standing ratio agrees within 5 %', m.pbFrom === 'eos' && m.after.pb > m.before.pb &&
+     (function () { var x = MU.cleanMud(r4.mud); x.pbFrom = 'corr'; var r = JSON.parse(JSON.stringify(r4)); r.mud = x;
+       var f2 = RP.finalise(r); return f2.mud.pbFrom === 'corr' && Math.abs(f2.pb / m.after.pb - 1) < 0.05; })());
+  ok('the finalised Bo / Rs rows stay thermodynamically consistent', q.checks.filter(function (c) { return c.key === 'ineq'; })[0].status === 'pass');
+  ok('the clean bubble point heads the saturated rows; gas z stays at its measured pressure',
+     fin.rows.some(function (r) { return Math.abs(r.p - fin.pb) < 1e-6 && Math.abs(r.rs - m.after.rsb) < 1e-9; }) &&
+     r4.dl.rows.filter(function (r) { return r.z !== null; }).every(function (d) { return fin.rows.some(function (r) { return r.p === d.p && r.z === d.z; }); }));
+  var off = JSON.parse(JSON.stringify(r4)); off.mud.apply = false;
+  ok('correction off: the finalised data are the contaminated sample', !RP.finalise(off).mud && RP.finalise(off).fluid.rsb === m.before.rsb);
+  ok('clean viscosity by Arrhenius blending', Math.abs(Math.log(m.after.muod) - (Math.log(m.before.muod) - m.vF * Math.log(1.15)) / (1 - m.vF)) < 1e-12);
+  var cc = MU.cleanComposition({ rows: [{ c: 'C1', z: 40 }, { c: 'C7+', z: 60 }], mw7: 220, sg7: 0.86 }, 0.1, 220, 0.80);
+  ok('filtrate taken out of the C7+ by mass and volume', Math.abs(cc.rows[0].z + cc.rows[1].z - 100) < 1e-9 && cc.sg7 > 0.86 && Math.abs(cc.mw7 - 220) < 1e-9);
+
+  /* import: the template's [mud] block and Excel padding */
+  var t = RP.parseReportText(RP.TEMPLATE)[0];
+  ok('the template imports its [mud] block', t.mud.rows.length === 25 && t.mud.sgF === 0.8 && t.mud.muF === 1.1 && t.mud.method === 'auto');
+  var csv = ['[report],,', 'name,X,', '[mud],,', 'filtrate specific gravity,0.81,', 'method,skimming,', 'carbon number,STO wt%,filtrate wt%',
+             'C12,5.1,9.8', '"C30+",13.9,'].join('\n');
+  var x = RP.parseReportText(csv)[0];
+  ok('a [mud] section from a spreadsheet: C-names, plus fraction, settings', x.mud.rows.length === 2 && x.mud.rows[1].n === 30 &&
+     x.mud.rows[0].f === 9.8 && x.mud.sgF === 0.81 && x.mud.method === 'skim');
+  ok('a saved report without a mud section reopens clean', RP.cleanReport({ name: 'old' }).mud.rows.length === 0 && RP.cleanReport({ name: 'old' }).mud.apply === true);
+})();
+
+section('26. Recovery screening from the PVT model');
+(function () {
+  var m = M.build({ api: 35, gammaG: 0.75, tempF: 180, rsb: 600, pMax: 5000 });
+  var e = RC.estimate(m, {});
+  ok('defaults resolve and validate; every result is marked as using defaults', !e.errors.length && e.usesDefaults &&
+     e.results.every(function (r) { return r.basis.usesDefaults; }) && e.values.pi === 5000 && e.values.pa === 500);
+
+  /* expansion: the material-balance formula with the model's Bo */
+  var bo = m.at(m.pb).bo, boi = m.at(5000).bo, cw = C.waterCompressibility(m.pb, 180, m.input.salinity);
+  near('expansion to Pb = [(Bob - Boi) + Boi (cw Swi + cf) dp / (1 - Swi)] / Bob', e.expansion.rf,
+       ((bo - boi) + boi * (cw * 0.2 + 4e-6) * (5000 - m.pb) / 0.8) / bo, 1e-9);
+
+  /* Muskat: the gas balance closes - gas in solution at Pb = gas still dissolved
+     + free gas in the tank + gas produced (integral of R dNp) */
+  var c = e.muskat.curve, gp = 0;
+  for (var i = 1; i < c.length; i++) if (isFinite(c[i].gor) && isFinite(c[i - 1].gor)) gp += 0.5 * (c[i].gor + c[i - 1].gor) * (c[i].rf - c[i - 1].rf);
+  var last = c[c.length - 1], bgL = m.at(last.p).bg / 5.614583;
+  var lhs = (1 - e.expansion.rf) * m.rsb, rhs = (1 - last.rf) * last.rs + last.sg * boi / (0.8 * bgL) + gp;
+  near('Muskat: the gas material balance closes within 1 %', rhs, lhs, 0.01);
+  ok('Muskat: producing GOR equals Rs until gas reaches Sgc, then exceeds it', c.filter(function (q) { return q.sg < 0.05 - 1e-6; })
+     .every(function (q) { return Math.abs(q.gor - q.rs) < 1e-6; }) && last.gor > 2 * last.rs);
+  ok('Muskat: recovery grows monotonically as pressure falls', c.every(function (q, k) { return !k || q.rf >= c[k - 1].rf - 1e-12; }));
+  ok('solution-gas recovery in the screening range 5 - 30 %', e.muskat.rf > 0.05 && e.muskat.rf < 0.30, (100 * e.muskat.rf).toFixed(1));
+
+  /* Buckley-Leverett: linear kr and equal viscosities displace like a piston */
+  var muw = C.waterViscosity(3000, 180, 3);
+  var mock = { fluid: 'oil', pb: 1000, input: { tempF: 180, salinity: 3 }, at: function () { return { muo: muw }; } };
+  var v = RC.resolve({ fluid: 'oil', pb: 1000, input: {}, oil: [{ p: 3000 }], at: mock.at }, { pi: 3000, pa: 300, pw: 3000, no: 1, ng: 1, now: 1, nw: 1, krwMax: 1 }).v;
+  var wdP = RC.waterDrive(mock, v);
+  near('Buckley-Leverett: piston-like displacement recovers (1 - Swi - Sorw)/(1 - Swi)', wdP.edBt, (1 - 0.2 - 0.25) / 0.8, 2e-3);
+  ok('water drive: breakthrough <= Ed <= the residual-oil limit', e.water.edBt <= e.water.ed + 1e-12 && e.water.ed <= e.water.edLimit + 1e-9 &&
+     e.water.fwf > 0 && e.water.fwf < 1);
+  var heavy = RC.estimate(M.build({ api: 16, gammaG: 0.7, tempF: 150, rsb: 100, pMax: 3000 }), {});
+  ok('a viscous oil has the higher mobility ratio and the lower displacement efficiency', heavy.water.mobility > e.water.mobility && heavy.water.ed < e.water.ed);
+
+  /* gas: exact p/z with a constant z, and the trapped-gas formula */
+  var zMock = { fluid: 'gas', input: {}, gas: [{ p: 4000 }], at: function (p) { return { z: 0.9, bg: 0.0282793 * 0.9 * 660 / p }; } };
+  var gv = RC.resolve(zMock, { pa: 400 }).v;
+  near('p/z depletion with constant z: RF = 1 - pa/pi', RC.gasDepletion(zMock, gv).rf, 0.9, 1e-12);
+  near('gas water drive: RF = 1 - (Bgi/Bgw)(Sgr/Sgi)', RC.gasWater(zMock, gv).rf, 1 - 0.25 / 0.8, 1e-12);
+  var g = RC.estimate(M.build({ fluid: 'gas', gammaG: 0.65, tempF: 200, pMax: 5000 }), {});
+  ok('gas reservoir: depletion 70 - 95 %, water drive below it', !g.errors.length && g.depletion.rf > 0.7 && g.depletion.rf < 0.95 && g.gasWater.rf < g.depletion.rf);
+
+  /* API (Arps et al. 1967) */
+  near('API solution-gas formula', e.api.solutionGas, 41.815 * Math.pow(0.2 * 0.8 / m.bob, 0.1611) * Math.pow(0.1 / m.muob, 0.0979) *
+       Math.pow(0.2, 0.3722) * Math.pow(m.pb / 500, 0.1741) / 100, 1e-12);
+
+  /* defaults, bands, overrides, validation */
+  ok('each sensitivity band contains its estimate', e.results.every(function (r) { return r.rf === null || !r.band || r.band.lo <= r.rf + 1e-9 && r.band.hi >= r.rf - 1e-9; }));
+  var all = {}; RC.ORDER.forEach(function (k) { all[k] = e.values[k]; });
+  var eAll = RC.estimate(m, all);
+  ok('with every input entered nothing is marked default and no band is drawn', !eAll.usesDefaults &&
+     eAll.results.every(function (r) { return !r.band || r.band.hi - r.band.lo < 1e-12; }));
+  ok('an entered Swi moves the estimate and is marked entered', RC.estimate(m, { swi: 0.3 }).muskat.rf !== e.muskat.rf &&
+     RC.estimate(m, { swi: 0.3 }).results[1].basis.rock.filter(function (q) { return q.key === 'swi'; })[0].isDefault === false);
+  ok('impossible inputs are refused with a reason', RC.estimate(m, { pa: 6000 }).errors.length > 0 && RC.estimate(m, { swi: 0.7, sorg: 0.3 }).errors.length > 0);
+
+  /* outputs carry the basis */
+  var csv = RC.toCsv(e);
+  ok('CSV starts with the disclaimer and marks defaults', /not a simulation forecast/.test(csv.split('\n')[1]) && /swi=0\.2 \(default\)/.test(csv));
+  var pdf = Buffer.from(RE.build(m, { recovery: e })).toString('latin1'), pdf0 = Buffer.from(RE.build(m, {})).toString('latin1');
+  ok('the PDF report carries the recovery section and its disclaimer only when asked', /Recovery screening/.test(pdf) &&
+     /SPE-PRMS/.test(pdf) && !/Recovery screening/.test(pdf0));
+  var pk = PJ.unpack(JSON.stringify(PJ.pack({ fluid: 'oil', inputs: { oil: { inputs: { api: 35 } } }, recovery: { oil: { swi: 0.25, pa: null }, gas: {} } })));
+  ok('project files keep the recovery inputs; older files open with defaults', pk.recovery.oil.swi === 0.25 && pk.recovery.oil.pa === null &&
+     JSON.stringify(PJ.unpack(JSON.stringify(PJ.pack({ fluid: 'oil', inputs: { oil: { inputs: { api: 35 } } } }))).recovery) === '{"oil":{},"gas":{}}');
+})();
+
+section('27. Samples tab: comparing PVT reports');
+(function () {
+  var d = RP.demoReports(M);
+  d.forEach(function (r, i) { r.id = 'r' + i; r.final = true; });
+  var res = CP.collect(d, RP.qcReport, { fluid: 'oil' });
+  var failing = d.filter(function (r) { return RP.qcReport(r).status === 'fail'; }).map(function (r) { return r.name; });
+  ok('accepted reports take part; a report failing QC is left out with the reason', res.samples.length === d.length - failing.length &&
+     res.excluded.every(function (x) { return x.why === 'fails QC'; }) && failing.length === res.excluded.length);
+  ok('...and comes back when asked', CP.collect(d, RP.qcReport, { fluid: 'oil', failed: true }).samples.length === d.length);
+  d[0].final = false;
+  ok('a report not yet accepted is left out unless asked', CP.collect(d, RP.qcReport, { fluid: 'oil' }).excluded.some(function (x) { return x.why === 'not accepted yet'; }) &&
+     CP.collect(d, RP.qcReport, { fluid: 'oil', unaccepted: true }).samples.some(function (s) { return s.id === 'r0'; }));
+  ok('gas reports do not appear among the oil samples', CP.collect(d.concat([{ id: 'g', fluid: 'gas', name: 'G', final: true }]), RP.qcReport, { fluid: 'oil' })
+     .samples.every(function (s) { return s.fluid === 'oil'; }));
+  var s0 = res.samples[0], tot = 0;
+  CP.ORDER.forEach(function (k) { tot += s0.composition.z[k]; });
+  near('compositions are normalised to 100 mol % in a fixed component order', tot, 100, 1e-9);
+  ok('component names from reports map onto the order (NC4, IC5, C7PLUS)', CP.compName('NC4') === 'nC4' && CP.compName('ic5') === 'iC5' && CP.compName('C7PLUS') === 'C7+' && CP.compName('XYZ') === null);
+  var fin = RP.finalise(d[0]);
+  ok('key properties are those of the finalised data', s0.props.pb === fin.pb && s0.props.bob === fin.bob && s0.props.rsb === fin.fluid.rsb);
+  near('a property at a pressure interpolates the finalised rows', CP.at([{ p: 1000, rs: 100 }, { p: 2000, rs: 300 }], 1250, 'rs'), 150, 1e-12);
+  ok('the mud-contaminated example carries its corrected values and its carbon-number profile',
+     res.samples.some(function (s) { return s.props.mudPct > 6 && s.props.mudPct < 8 && s.scn && s.scn.length > 20; }));
+  var tr = CP.trend([{ x: 1, y: 3 }, { x: 2, y: 5 }, { x: 3, y: 7 }, { x: 4, y: 9.4 }]);
+  res.samples.forEach(function (q, i) { q.color = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100'][i]; });
+  var mm = M.build({ api: 35, gammaG: 0.75, tempF: 180, rsb: 600, pMax: 5000 });
+  var pdfS = Buffer.from(RE.build(mm, { samples: res })).toString('latin1');
+  ok('the PDF report carries the sample comparison when asked, and not otherwise', /Sample comparison/.test(pdfS) &&
+     /Composition by component/.test(pdfS) && /Bubble point against Rsb/.test(pdfS) && !/Sample comparison/.test(Buffer.from(RE.build(mm, {})).toString('latin1')) &&
+     /SAMPLE COMPARISON/.test(RE.outline(mm, { samples: res })));
+  ok('trend line by least squares, with residuals for outlier flags', Math.abs(tr.b - 2.12) < 1e-9 && tr.r2 > 0.99 && tr.resid.length === 4 &&
+     CP.trend([{ x: 1, y: 1 }, { x: 2, y: 2 }]) === null);
 })();
 
 /* PDF report: a valid file, the sections asked for, both fluids and unit systems */

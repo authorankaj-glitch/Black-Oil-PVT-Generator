@@ -21,6 +21,11 @@
  *   units: 'field' | 'metric',   units of the report (formulas stay in field)
  *   title, project, preparedBy,  cover text (all optional)
  *   plots, calcs, method: bool   include those sections (default true)
+ *   recovery: object             a recovery.js estimate: adds the Recovery
+ *                                screening section (optional)
+ *   samples: object              a compare.js comparison (samples with a
+ *                                colour, components, excluded, envelopes):
+ *                                adds the Sample comparison section
  *   now: Date                    report date (default: now)
  * }
  *
@@ -47,7 +52,7 @@
       bg: { f: ID, u: 'ft³/scf', d: 5 }, rho: { f: ID, u: 'lb/ft³', d: 2 },
       c: { f: ID, u: '1/psi', d: -1 }, mu: { f: ID, u: 'cp', d: 4 },
       cgr: { f: ID, u: 'STB/MMscf', d: 2 }, eg: { f: ID, u: 'scf/ft³', d: 1 },
-      none: { f: ID, u: '–', d: 4 }
+      len: { f: ID, u: 'ft', d: 0 }, none: { f: ID, u: '–', d: 4 }
     },
     metric: {
       p: { f: function (x) { return x * 0.0689475729; }, u: 'bara', d: 1 },
@@ -60,7 +65,7 @@
       mu: { f: ID, u: 'mPa·s', d: 4 },
       cgr: { f: function (x) { return x * 5.614583; }, u: 'sm³/10^6 sm³', d: 2 },
       eg: { f: ID, u: 'sm³/rm³', d: 1 },
-      none: { f: ID, u: '–', d: 4 }
+      len: { f: function (x) { return x * 0.3048; }, u: 'm', d: 1 }, none: { f: ID, u: '–', d: 4 }
     }
   };
 
@@ -319,8 +324,12 @@
    * Flow layout: headings, paragraphs, tables, tiles and charts
    * ================================================================ */
   var C = {
-    ink: '#0f1b2d', ink2: '#46546a', muted: '#7a8699', rule: '#d5dce6', band: '#f5f7fa',
-    accent: '#1f63c6', accentSoft: '#e8f0fb', oil: '#2a78d6', gas: '#eb6834', water: '#1baf7a',
+    ink: '#14253a', ink2: '#3a4a5f', muted: '#5a6779', rule: '#d5dce6', band: '#f5f7fa',
+    /* oil-and-water scheme, as in app.css: navy brand, orange accent
+       (accentText is the readable orange for text), blue for info notes */
+    brand: '#12304d', brandSoft: '#c9d6e6',
+    accent: '#f28a1b', accentSoft: '#fdf1e2', accentText: '#a84f08',
+    info: '#1f6fb8', infoSoft: '#e8f0fb', oil: '#2a78d6', gas: '#eb6834', water: '#1baf7a',
     lab: '#e34948', ok: '#1b8a5a', okSoft: '#e7f5ee', warn: '#b26b00', warnSoft: '#fdf3e1'
   };
   var MARGIN = 46, TOP = 58, BOTTOM = 52, CW = PAGE_W - 2 * MARGIN;
@@ -367,7 +376,7 @@
     if (this.y > TOP + 1) this.gap(10);
     this.section++;
     var pg = this.page;
-    pg.text(MARGIN, this.y + 13, this.section + '.', { size: 13, font: 'B', color: C.accent });
+    pg.text(MARGIN, this.y + 13, this.section + '.', { size: 13, font: 'B', color: C.accentText });
     pg.text(MARGIN + 20, this.y + 13, title, { size: 13, font: 'B', color: C.ink });
     pg.line(MARGIN, this.y + 20, PAGE_W - MARGIN, this.y + 20, { color: C.accent, w: 0.8 });
     this.y += 30;
@@ -394,7 +403,7 @@
     items.forEach(function (it) {
       var lines = wrap(it, CW - 14, size, false);
       self.ensure(lh * Math.min(lines.length, 2));
-      self.page.text(MARGIN + 3, self.y + size, '•', { size: size, color: C.accent, font: 'B' });
+      self.page.text(MARGIN + 3, self.y + size, '•', { size: size, color: C.accentText, font: 'B' });
       lines.forEach(function (ln) {
         self.ensure(lh);
         self.page.text(MARGIN + 14, self.y + size, ln, { size: size, color: o.color || C.ink });
@@ -409,8 +418,8 @@
     var size = 9, lh = size * 1.45;
     var lines = wrap(s, CW - 34, size, false), h = lines.length * lh + 10;
     this.ensure(h + 4);
-    var fill = kind === 'ok' ? C.okSoft : kind === 'warn' ? C.warnSoft : C.accentSoft;
-    var mark = kind === 'ok' ? C.ok : kind === 'warn' ? C.warn : C.accent;
+    var fill = kind === 'ok' ? C.okSoft : kind === 'warn' ? C.warnSoft : C.infoSoft;
+    var mark = kind === 'ok' ? C.ok : kind === 'warn' ? C.warn : C.info;
     var pg = this.page, y0 = this.y;
     pg.rect(MARGIN, y0, CW, h, { fill: fill });
     pg.rect(MARGIN, y0, 3, h, { fill: mark });
@@ -428,7 +437,7 @@
         var x = MARGIN + i * (w + gapX), y = self.y, pg = self.page;
         pg.rect(x, y, w, h, { fill: it.hero ? C.accentSoft : C.band, stroke: it.hero ? C.accent : C.rule, w: 0.5 });
         pg.text(x + 9, y + 14, it.label, { size: 7.8, color: C.ink2 });
-        var vw = pg.text(x + 9, y + 34, it.value, { size: 14, font: 'B', color: it.hero ? C.accent : C.ink });
+        var vw = pg.text(x + 9, y + 34, it.value, { size: 14, font: 'B', color: it.hero ? C.accentText : C.ink });
         if (it.unit) pg.text(x + 13 + vw, y + 34, it.unit, { size: 8, color: C.ink2 });
       });
       this.y += h + gapY;
@@ -512,12 +521,15 @@
     pg.text(x + 9, y + 15, spec.title, { size: 9.5, font: 'B', color: C.ink });
     if (spec.subtitle) pg.text(x + 9, y + 26, spec.subtitle, { size: 7, color: C.muted });
     var top = y + (spec.subtitle ? 36 : 26);
-    var legend = spec.series.length > 1;
-    if (legend) {
+    var inLegend = spec.series.filter(function (s) { return s.legend !== false; });
+    if (inLegend.length > 1) {
+      /* one row, wrapping onto the next when the names do not fit */
       var lx = x + 9;
-      spec.series.forEach(function (s) {
+      inLegend.forEach(function (s) {
+        var tw = textWidth(s.name, 7);
+        if (lx > x + 9 && lx + 26 + tw > x + w - 6) { lx = x + 9; top += 10; }
         if (s.scatter) pg.circle(lx + 5, top + 3, 2.2, { stroke: s.color, w: 0.9 });
-        else pg.line(lx, top + 3, lx + 12, top + 3, { color: s.color, w: 1.6 });
+        else pg.line(lx, top + 3, lx + 12, top + 3, { color: s.color, w: 1.6, dash: s.dash });
         lx += 17 + pg.text(lx + 16, top + 5.6, s.name, { size: 7, color: C.ink2 }) + 10;
       });
       top += 12;
@@ -567,7 +579,7 @@
     pg.clip(L, T - 2, R - L + 2, B - T + 4);
     spec.series.forEach(function (s) {
       if (s.scatter) return;
-      pg.poly(s.points.map(function (p) { return [sx(p[0]), sy(p[1])]; }), { color: s.color, w: 1.5 });
+      pg.poly(s.points.map(function (p) { return [sx(p[0]), sy(p[1])]; }), { color: s.color, w: 1.5, dash: s.dash });
     });
     spec.series.forEach(function (s) {
       if (!s.scatter) return;
@@ -575,6 +587,51 @@
     });
     pg.unclip();
   }
+
+  /* Grouped bars across the full width: one group per category, one bar
+     per series ({ title, subtitle, cats, series: [{ name, color, values }],
+     yLabel }). */
+  Layout.prototype.bars = function (spec) {
+    var h = 215, pg, x = MARGIN, w = CW;
+    this.ensure(h + 10);
+    pg = this.page;
+    var y = this.y;
+    pg.rect(x, y, w, h, { stroke: C.rule, w: 0.5 });
+    pg.text(x + 9, y + 15, spec.title, { size: 9.5, font: 'B', color: C.ink });
+    if (spec.subtitle) pg.text(x + 9, y + 26, spec.subtitle, { size: 7, color: C.muted });
+    var top = y + 36, lx = x + 9;
+    spec.series.forEach(function (s) {
+      var tw = textWidth(s.name, 7);
+      if (lx > x + 9 && lx + 26 + tw > x + w - 6) { lx = x + 9; top += 10; }
+      pg.rect(lx, top, 8, 6, { fill: s.color });
+      lx += 12 + pg.text(lx + 11, top + 5.6, s.name, { size: 7, color: C.ink2 }) + 12;
+    });
+    top += 14;
+    var L = x + 40, Rr = x + w - 10, T = top, B = y + h - 22;
+    var vmax = 0;
+    spec.series.forEach(function (s) { s.values.forEach(function (v) { if (v > vmax) vmax = v; }); });
+    var yt = niceTicks(0, vmax || 1, 5);
+    if (yt[yt.length - 1] < vmax) yt.push(yt[yt.length - 1] + yt.step);
+    var y1 = yt[yt.length - 1];
+    var sy = function (v) { return B - v / y1 * (B - T); };
+    yt.forEach(function (v) {
+      pg.line(L, sy(v), Rr, sy(v), { color: '#e6eaf0', w: 0.4 });
+      pg.text(L - 4, sy(v) + 2.6, tickLabel(v, yt.step), { size: 6.8, color: C.muted, align: 'right' });
+    });
+    var n = spec.cats.length, k = spec.series.length, gw = (Rr - L) / n, bw = Math.min(10, (gw - 6) / k);
+    spec.cats.forEach(function (c, i) {
+      var gx = L + gw * i + (gw - bw * k) / 2;
+      spec.series.forEach(function (s, j) {
+        var v = s.values[i] || 0;
+        if (v > 0) pg.rect(gx + j * bw, sy(v), Math.max(0.6, bw - 0.6), B - sy(v), { fill: s.color });
+      });
+      pg.text(L + gw * (i + 0.5), B + 11, c, { size: 6.8, color: C.ink2, align: 'center' });
+    });
+    pg.line(L, B, Rr, B, { color: C.ink2, w: 0.6 });
+    pg.line(L, T, L, B, { color: C.ink2, w: 0.6 });
+    pg.textUp(x + 11, (T + B) / 2, spec.yLabel, { size: 7.4 });
+    this.y += h + 10;
+  };
 
   Layout.prototype.charts = function (specs) {
     var gapX = 10, w = (CW - gapX) / 2, h = 205, self = this;
@@ -902,6 +959,169 @@
     return model.fluid === 'gas' ? (model.gasKind === 'wet' ? 'Wet gas reservoir' : 'Dry gas reservoir') : 'Oil reservoir';
   }
 
+  /* Sample comparison: the Samples tab in print. */
+  var SAMPLE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+  function samplesSection(L, cmp, U) {
+    var S = cmp.samples, gas = S[0].fluid === 'gas';
+    var col = function (s, i) { return s.color || SAMPLE_COLORS[i % 8]; };
+    var vf = function (k, v) { return v === null || v === undefined || !isFinite(v) ? '–' : fx(U[k].f(v), U[k].d); };
+    var nf = function (v, d) { return v === null || v === undefined || !isFinite(v) ? '–' : fx(v, d); };
+    L.heading('Sample comparison', { keep: 200 });
+    var who = S.length + ' ' + (gas ? 'gas' : 'oil') + ' PVT report' + (S.length > 1 ? 's' : '') + ' side by side: ' +
+      (cmp.opts && (cmp.opts.unaccepted || cmp.opts.failed)
+        ? 'the accepted reports' + (cmp.opts.unaccepted ? ', with reports not yet accepted' : '') + (cmp.opts.failed ? ', with reports that fail QC' : '')
+        : 'the reports accepted on the PVT reports & QC tab') + '. Values are those of each report\'s finalised data' +
+      (gas ? '.' : ', corrected for mud contamination where that test is entered.');
+    L.para(who, { color: C.ink2, size: 9 });
+    if (cmp.excluded && cmp.excluded.length) L.para('Not shown: ' + cmp.excluded.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.', { color: C.muted, size: 8 });
+
+    L.subheading('Key properties');
+    var cols, rows;
+    if (gas) {
+      cols = [{ head: 'Sample', w: 0.22 }, { head: 'QC', w: 0.07 }, { head: 'Depth\n' + U.len.u, w: 0.08, align: 'right' },
+              { head: 'P res\n' + U.p.u, w: 0.09, align: 'right' }, { head: 'Gas\ngravity', w: 0.08, align: 'right' },
+              { head: 'CGR\n' + U.cgr.u, w: 0.11, align: 'right' }, { head: 'z at\nP res', w: 0.08, align: 'right' },
+              { head: 'μg at P res\n' + U.mu.u, w: 0.1, align: 'right' }, { head: 'C1\nmol %', w: 0.08, align: 'right' }, { head: 'C7+\nmol %', w: 0.09, align: 'right' }];
+      rows = S.map(function (s) {
+        var z = s.composition ? s.composition.z : {};
+        return [s.name, s.status, vf('len', s.depth), vf('p', s.pRes), nf(s.props.gammaG, 3), vf('cgr', s.props.cgr), nf(s.props.zRes, 4),
+                vf('mu', s.props.mugRes), nf(z.C1, 2), nf(z['C7+'], 2)];
+      });
+    } else {
+      cols = [{ head: 'Sample', w: 0.2 }, { head: 'QC', w: 0.06 }, { head: 'Depth\n' + U.len.u, w: 0.07, align: 'right' },
+              { head: 'P res\n' + U.p.u, w: 0.08, align: 'right' }, { head: 'Pb\n' + U.p.u, w: 0.08, align: 'right' },
+              { head: 'Rsb\n' + U.rs.u, w: 0.09, align: 'right' }, { head: 'API', w: 0.06, align: 'right' },
+              { head: 'Bob\n' + U.bo.u, w: 0.09, align: 'right' }, { head: 'μob\n' + U.mu.u, w: 0.08, align: 'right' },
+              { head: 'C7+\nmol %', w: 0.07, align: 'right' }, { head: 'C7+\nMW', w: 0.06, align: 'right' }, { head: 'Mud\nwt %', w: 0.06, align: 'right' }];
+      rows = S.map(function (s) {
+        var z = s.composition ? s.composition.z : {};
+        return [s.name, s.status, vf('len', s.depth), vf('p', s.pRes), vf('p', s.props.pb), vf('rs', s.props.rsb), nf(s.props.api, 1),
+                vf('bo', s.props.bob), vf('mu', s.props.muob), nf(z['C7+'], 2), nf(s.props.mw7, 0), nf(s.props.mudPct, 1)];
+      });
+    }
+    L.table(cols, rows, { size: 7.6, firstMuted: false });
+
+    var withComp = S.filter(function (s) { return s.composition; });
+    if (withComp.length && cmp.components.length) {
+      L.subheading('Compositions');
+      var sw = Math.min(0.14, 0.82 / withComp.length);
+      /* sample names wrapped to their column so long names do not overprint */
+      var headOf = function (name) { return wrap(name, sw * CW - 10, 7.6, true).slice(0, 3).join('\n'); };
+      L.table([{ head: 'Component (mol %)', w: 1 - sw * withComp.length }].concat(withComp.map(function (s) { return { head: headOf(s.name), w: sw, align: 'right' }; })),
+        cmp.components.map(function (c) { return [c].concat(withComp.map(function (s) { return nf(s.composition.z[c], 3); })); }), { size: 7.6, firstMuted: true });
+      L.bars({ title: 'Composition by component', subtitle: 'mol %, normalised to 100', yLabel: 'mol %', cats: cmp.components,
+        series: withComp.map(function (s) { var i = S.indexOf(s); return { name: s.name, color: col(s, i), values: cmp.components.map(function (c) { return s.composition.z[c]; }) }; }) });
+    }
+
+    var specs = [], pl = 'Pressure (' + U.p.u + ')';
+    var over = gas ? [['z', 'Gas deviation factor', null], ['mug', 'Gas viscosity', 'mu']]
+                   : [['rs', 'Solution gas-oil ratio', 'rs'], ['bo', 'Oil formation volume factor', 'bo'], ['muo', 'Oil viscosity', 'mu'], ['z', 'Gas deviation factor', null]];
+    over.forEach(function (d) {
+      var ser = S.map(function (s, i) {
+        return { name: s.name, color: col(s, i), points: s.rows.filter(function (r) { return r[d[0]] !== null && r[d[0]] !== undefined && isFinite(r[d[0]]); })
+          .map(function (r) { return [U.p.f(r.p), d[2] ? U[d[2]].f(r[d[0]]) : r[d[0]]]; }) };
+      }).filter(function (q) { return q.points.length; });
+      if (ser.length) specs.push({ title: d[1], subtitle: 'Finalised data of each sample', xLabel: pl, yLabel: d[2] ? d[1].split(' (')[0] + ' (' + U[d[2]].u + ')' : 'z (–)', series: ser });
+    });
+    (cmp.envelopes || []).length && specs.push({ title: 'Phase envelopes', subtitle: 'Peng-Robinson from each composition; circles: reservoir conditions',
+      xLabel: 'Temperature (' + U.T.u + ')', yLabel: pl, yMinZero: true,
+      series: cmp.envelopes.map(function (e) { return { name: e.name, color: e.color, points: e.points.map(function (q) { return [U.T.f(q.t), U.p.f(q.p)]; }) }; })
+        .concat(cmp.envelopes.filter(function (e) { return e.res; }).map(function (e) { return { name: e.name, color: e.color, scatter: true, legend: false, points: [[U.T.f(e.res.t), U.p.f(e.res.p)]] }; })) });
+    var tdefs = gas
+      ? [['depth', 'cgr', 'CGR against depth', 'len', 'cgr'], ['depth', 'gammaG', 'Gas gravity against depth', 'len', null]]
+      : [['depth', 'pb', 'Bubble point against depth', 'len', 'p'], ['depth', 'rsb', 'Rsb against depth', 'len', 'rs'], ['rsb', 'pb', 'Bubble point against Rsb', 'rs', 'p']];
+    tdefs.forEach(function (t) {
+      var val = function (s, k) { return k === 'depth' ? s.depth : s.props[k]; };
+      var pts = S.map(function (s, i) { return { s: s, i: i, x: val(s, t[0]), y: val(s, t[1]) }; })
+        .filter(function (q) { return q.x !== null && q.x !== undefined && isFinite(q.x) && q.y !== null && q.y !== undefined && isFinite(q.y); });
+      if (pts.length < 2) return;
+      var cx = function (v) { return t[3] ? U[t[3]].f(v) : v; }, cy = function (v) { return t[4] ? U[t[4]].f(v) : v; };
+      var ser = pts.map(function (q) { return { name: q.s.name, color: col(q.s, q.i), scatter: true, points: [[cx(q.x), cy(q.y)]] }; });
+      var tr = trendLine(pts), sub = pts.length < 3 ? 'A trend line needs three samples' : 'Dashed: least-squares line';
+      if (tr) {
+        var xs = pts.map(function (q) { return q.x; }), a = Math.min.apply(null, xs), b = Math.max.apply(null, xs);
+        ser.unshift({ name: 'Trend (R² ' + tr.r2.toFixed(2) + ')', color: C.ink2, dash: [3, 2], points: [[cx(a), cy(tr.a + tr.b * a)], [cx(b), cy(tr.a + tr.b * b)]] });
+        if (tr.off.length) sub = 'Off the trend: ' + tr.off.map(function (k) { return pts[k].s.name; }).join(', ');
+      }
+      var xl = t[0] === 'depth' ? 'Depth (' + U.len.u + ')' : 'Rsb (' + U.rs.u + ')';
+      var yl = t[1] === 'pb' ? 'Pb (' + U.p.u + ')' : t[1] === 'rsb' ? 'Rsb (' + U.rs.u + ')' : t[1] === 'cgr' ? 'CGR (' + U.cgr.u + ')' : 'Gas gravity';
+      specs.push({ title: t[2], subtitle: sub, xLabel: xl, yLabel: yl, series: ser });
+    });
+    if (specs.length) L.charts(specs);
+    if (!(cmp.envelopes || []).length && withComp.length) L.para('Phase envelopes: open the Samples tab once to compute them, then build the report again.', { color: C.muted, size: 8 });
+  }
+  function trendLine(pts) {
+    if (pts.length < 3) return null;
+    var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+    pts.forEach(function (q) { sx += q.x; sy += q.y; sxx += q.x * q.x; sxy += q.x * q.y; syy += q.y * q.y; });
+    var d = n * sxx - sx * sx;
+    if (!(Math.abs(d) > 1e-12)) return null;
+    var b = (n * sxy - sx * sy) / d, a = (sy - b * sx) / n, st = syy - sy * sy / n, sr = 0, res = [];
+    pts.forEach(function (q) { var e = q.y - a - b * q.x; res.push(e); sr += e * e; });
+    var sd = Math.sqrt(sr / Math.max(1, n - 2)), off = [];
+    if (n >= 4) res.forEach(function (e, k) { if (Math.abs(e) > 2 * sd) off.push(k); });
+    return { a: a, b: b, r2: st > 0 ? 1 - sr / st : 1, off: off };
+  }
+
+  /* Recovery screening: the estimate the Recovery tab shows, with its
+     basis, so a printed number never travels without its assumptions. */
+  var REC_DISCLAIMER = 'Screening estimates from the PVT model and default rock properties. Not a reserves or resources ' +
+    'estimate (SPE-PRMS) and not a simulation forecast: no geology, wells, rates or time.';
+  function recoverySection(L, model, est, U) {
+    var pc = function (x) { return x === null || x === undefined || !isFinite(x) ? '–' : (100 * x).toFixed(1) + ' %'; };
+    L.heading('Recovery screening', { keep: 200 });
+    L.notice('warn', REC_DISCLAIMER);
+    L.table([{ head: 'Mechanism', w: 0.36 }, { head: 'Recovery', w: 0.12, align: 'right' },
+             { head: 'Range (defaults varied)', w: 0.2, align: 'right' }, { head: 'Method', w: 0.32 }],
+      est.results.map(function (r) {
+        return [r.title + (r.basis.usesDefaults ? ' *' : ''), pc(r.rf),
+                r.band && r.band.hi > r.band.lo + 1e-4 ? pc(r.band.lo) + ' – ' + pc(r.band.hi) : '–', r.basis.reference];
+      }), { size: 8.2, firstMuted: false });
+    L.para('* Uses at least one rock input still at its typical default. Water drive is a displacement efficiency with complete ' +
+      'sweep: field recovery is this times the sweep efficiency, which is not estimated. The API figures are a regression of ' +
+      '1960s field data and indicative only.', { color: C.muted, size: 8 });
+    var used = {};
+    est.results.forEach(function (r) { r.basis.rock.forEach(function (q) { used[q.key] = q; }); });
+    var rows = Object.keys(used).map(function (k) {
+      var q = used[k], val = q.kind === 'p' ? U.p.f(q.value).toFixed(U.p.d) + ' ' + U.p.u
+        : q.kind === 'c' ? U.c.f(q.value).toExponential(2) + ' ' + U.c.u : String(+(+q.value).toPrecision(4));
+      return [q.label, val, q.isDefault ? 'default' : 'entered'];
+    });
+    L.subheading('Rock and economic inputs');
+    L.table([{ head: 'Input', w: 0.56 }, { head: 'Value', w: 0.26 }, { head: 'Source', w: 0.18 }], rows, { size: 8.2, firstMuted: true });
+    L.subheading('Assumptions');
+    var ass = [];
+    est.results.forEach(function (r) { ass.push(r.title + ': ' + r.basis.assumptions.join('; ') + '.'); });
+    L.bullets(ass.concat(est.notes || []), { size: 8.6 });
+    var pLabel = 'Pressure (' + U.p.u + ')', specs = [];
+    if (est.fluid === 'oil') {
+      var ex = est.expansion.curve.map(function (c) { return [U.p.f(c.p), 100 * c.rf]; });
+      var mu = est.muskat.error ? [] : est.muskat.curve;
+      specs.push({ title: 'Recovery factor against pressure', subtitle: 'Expansion to Pb, then solution-gas drive', xLabel: pLabel,
+        yLabel: 'Recovery (%)', yMinZero: true, marker: model.pb < est.values.pi ? { x: U.p.f(model.pb), label: 'Pb' } : null,
+        series: [{ name: 'Expansion', color: C.oil, points: ex.slice().reverse() },
+                 { name: 'Solution-gas drive', color: C.gas, points: mu.map(function (c) { return [U.p.f(c.p), 100 * c.rf]; }).reverse() }] });
+      if (mu.length) specs.push({ title: 'Producing GOR against pressure', subtitle: 'Muskat tank: producing GOR against the solution GOR', xLabel: pLabel,
+        yLabel: 'GOR (' + U.rs.u + ')', yMinZero: true,
+        series: [{ name: 'Producing GOR', color: C.gas, points: mu.filter(function (c) { return isFinite(c.gor); }).map(function (c) { return [U.p.f(c.p), U.rs.f(c.gor)]; }).reverse() },
+                 { name: 'Rs', color: C.oil, points: mu.map(function (c) { return [U.p.f(c.p), U.rs.f(c.rs)]; }).reverse() }] });
+      specs.push({ title: 'Fractional flow of water', subtitle: 'Buckley-Leverett at ' + U.p.f(est.water.pw).toFixed(U.p.d) + ' ' + U.p.u + ', with the Welge tangent',
+        xLabel: 'Water saturation (fraction)', yLabel: 'fw', yMinZero: true, marker: { x: est.water.swf, label: 'front' },
+        series: [{ name: 'fw', color: C.water, points: est.water.fwCurve.map(function (q) { return [q.sw, q.fw]; }) },
+                 { name: 'Welge tangent', color: C.ink2, points: est.water.tangent.map(function (q) { return [q.sw, q.fw]; }) }] });
+      specs.push({ title: 'Water cut against displacement efficiency', subtitle: 'Complete sweep', xLabel: 'Ed (%)', yLabel: 'Water cut (%)', yMinZero: true,
+        marker: { x: 100 * est.water.ed, label: 'economic limit' },
+        series: [{ name: 'Water cut', color: C.water, points: est.water.cut.map(function (q) { return [100 * q.ed, 100 * q.fw]; }) }] });
+    } else {
+      var d = est.depletion.curve;
+      specs.push({ title: 'p/z against gas recovered', subtitle: 'Volumetric depletion', xLabel: 'Recovered (%)', yLabel: 'p/z (' + U.p.u + ')', yMinZero: true,
+        series: [{ name: 'p/z', color: C.gas, points: d.map(function (c) { return [100 * c.rf, U.p.f(c.pz)]; }) }] });
+      specs.push({ title: 'Recovery factor against pressure', subtitle: 'Volumetric depletion to abandonment', xLabel: pLabel, yLabel: 'Recovery (%)', yMinZero: true,
+        series: [{ name: 'Depletion', color: C.gas, points: d.map(function (c) { return [U.p.f(c.p), 100 * c.rf]; }).reverse() }] });
+    }
+    L.charts(specs);
+  }
+
   function withDefaults(opts) {
     opts = opts || {};
     return {
@@ -910,6 +1130,8 @@
       project: opts.project ? String(opts.project).trim() : '',
       preparedBy: opts.preparedBy ? String(opts.preparedBy).trim() : '',
       plots: opts.plots !== false, calcs: opts.calcs !== false, method: opts.method !== false,
+      recovery: opts.recovery && opts.recovery.results && !(opts.recovery.errors || []).length ? opts.recovery : null,
+      samples: opts.samples && opts.samples.samples && opts.samples.samples.length ? opts.samples : null,
       now: opts.now instanceof Date ? opts.now : new Date()
     };
   }
@@ -939,12 +1161,12 @@
     var pg = L.page;
 
     /* cover band */
-    pg.rect(0, 0, PAGE_W, 118, { fill: C.accent });
+    pg.rect(0, 0, PAGE_W, 118, { fill: C.brand });
     pg.mark(MARGIN, 28, 26, 'light');
     pg.text(MARGIN + 34, 40, 'PhaseWiz', { size: 12, font: 'B', color: '#ffffff' });
-    pg.text(MARGIN + 34, 52, 'BLACK-OIL PVT GENERATOR', { size: 7.5, font: 'B', color: '#cfe0f7' });
+    pg.text(MARGIN + 34, 52, 'BLACK-OIL PVT GENERATOR', { size: 7.5, font: 'B', color: C.brandSoft });
     pg.text(MARGIN, 82, o.title, { size: 22, font: 'B', color: '#ffffff' });
-    pg.text(MARGIN, 102, (o.project ? o.project + '  ·  ' : '') + fluidLabel(model) + ' – black-oil PVT model', { size: 10.5, color: '#e3edfb' });
+    pg.text(MARGIN, 102, (o.project ? o.project + '  ·  ' : '') + fluidLabel(model) + ' – black-oil PVT model', { size: 10.5, color: C.brandSoft });
     var meta = [['Date', dateText(o.now)], ['Units', o.units === 'metric' ? 'Metric' : 'Field'],
       ['Basis', model.tuning ? 'Tuned to laboratory data' : 'Published correlations']];
     if (o.preparedBy) meta.push(['Prepared by', o.preparedBy]);
@@ -1019,7 +1241,13 @@
       if (model.psat > 0) L.para('The shaded row is the bubble point.', { color: C.muted, size: 8 });
     }
 
-    /* 7. method */
+    /* 7. recovery screening */
+    if (o.recovery) recoverySection(L, model, o.recovery, U);
+
+    /* 8. the PVT reports side by side */
+    if (o.samples) samplesSection(L, o.samples, U);
+
+    /* 8. method */
     if (o.method) {
       L.heading('Method and limitations', { keep: 120 });
       L.bullets(methodBullets(model), { size: 9 });
@@ -1073,6 +1301,24 @@
       sec('Key calculations');
       workedRows(model, U).forEach(function (r) { L.push('  - ' + r[0] + ': ' + r[2]); });
       L.push('  - PVT property table (' + (model.fluid === 'gas' ? model.gas : model.oil).length + ' pressures)');
+    }
+    if (o.recovery) {
+      sec('Recovery screening');
+      o.recovery.results.forEach(function (r) {
+        L.push('  ' + r.title + ': ' + (r.rf === null ? '–' : (100 * r.rf).toFixed(1) + ' %') + (r.basis.usesDefaults ? '  (uses default rock inputs)' : ''));
+      });
+      L.push('  Screening only: not a reserves estimate. Basis, inputs and assumptions are listed in the report.');
+    } else if (options && options.recoveryOn) {
+      sec('Recovery screening');
+      L.push('  Recovery by drive mechanism with its basis (computed when the report is built; see the Recovery tab).');
+    }
+    if (o.samples) {
+      sec('Sample comparison');
+      L.push('  ' + o.samples.samples.length + ' report(s): ' + o.samples.samples.map(function (q) { return q.name; }).join(', '));
+      L.push('  Key properties, compositions, curves against pressure' + ((o.samples.envelopes || []).length ? ', phase envelopes' : '') + ' and trends with depth');
+    } else if (options && options.samplesOn) {
+      sec('Sample comparison');
+      L.push('  The accepted PVT reports side by side (built with the report; see the Samples tab).');
     }
     if (o.method) sec('Method and limitations');
     L.push('', TOOL + ' - ' + COPYRIGHT);

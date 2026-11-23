@@ -355,6 +355,80 @@ accepted, finalised data to the tuning.
   C1&ndash;C7+ interaction coefficient is regressed so the envelope passes
   through the case bubble point; a gas envelope is untuned.
 
+### Oil-based mud contamination
+
+An oil report can carry a **Mud contamination** test: the stock-tank oil (STO)
+composition by carbon number in wt % and, when analysed, the mud filtrate.
+`js/contamination.js` estimates the filtrate weight fraction c of the STO and
+takes the finalised data back to the clean oil.
+
+* **Skimming** (MacMillan, Ginley & Dembicki, 1997) &mdash; ln(w<sub>n</sub>/M<sub>n</sub>)
+  of a clean oil is a straight line in carbon number from about C8. The line is
+  fitted outside the filtrate range; the excess above it inside is the filtrate.
+  The range comes from the filtrate composition, from the carbon numbers set on
+  the test, or automatically (the run of points more than 8 % above a robust
+  line, widened while the excess stays above 3 %).
+* **Subtraction** &mdash; w<sub>clean</sub> = (W &minus; cF)/(1 &minus; c);
+  c minimises the least-squares misfit of the cleaned ln(x) line, searched up
+  to the value at which a cleaned carbon number would turn negative.
+* SCN molecular weights from Katz & Firoozabadi (1978); the plus fraction is
+  kept in the totals, not fitted.
+* **Corrections**, with v<sub>F</sub> = c&gamma;<sub>o</sub>/&gamma;<sub>F</sub>:
+  R<sub>s</sub>&prime; = R<sub>s</sub>/(1 &minus; v<sub>F</sub>);
+  B<sub>o</sub>&prime; = (B<sub>o</sub> &minus; v<sub>F</sub>B<sub>F</sub>)/(1 &minus; v<sub>F</sub>),
+  B<sub>F</sub> = 1 + 4&times;10<sup>&minus;4</sup>(T &minus; 60) unless entered;
+  &gamma;<sub>o</sub>&prime; = (&gamma;<sub>o</sub> &minus; v<sub>F</sub>&gamma;<sub>F</sub>)/(1 &minus; v<sub>F</sub>);
+  ln&mu;<sub>od</sub>&prime; = (ln&mu;<sub>od</sub> &minus; v<sub>F</sub>ln&mu;<sub>F</sub>)/(1 &minus; v<sub>F</sub>),
+  live viscosities scaled by the same ratio.
+* **Bubble point** &mdash; the C1&ndash;C7+ interaction is regressed to the
+  measured P<sub>b</sub> on the contaminated composition, the filtrate is
+  removed from the C7+ (moles, weight and volume) and the clean fluid flashed;
+  or Standing (1947) as a ratio. Saturated rows are stretched by
+  P<sub>b</sub>&prime;/P<sub>b</sub>, undersaturated rows shifted by
+  P<sub>b</sub>&prime; &minus; P<sub>b</sub>.
+* Checks: level (&lt; 5 wt % pass, 5&ndash;10 warn, &gt; 10 fail), straightness
+  of the clean trend (R&sup2;), and agreement of the two methods.
+
+### Samples tab
+
+With laboratory data in use, the **Samples** tab shows the accepted PVT
+reports of the fluid system side by side (`js/compare.js`): compositions
+(grouped bars, linear or log; stock-tank oil by carbon number; C1 against
+C7+), a key-properties table, the finalised curves against pressure (linked to
+the pressure cursor), Peng&ndash;Robinson phase envelopes with reservoir
+conditions, and trends with depth with a least-squares line and outliers
+named. Reports not yet accepted, or failing QC, can be included; any sample
+can be hidden. The same comparison goes into the PDF report as a *Sample
+comparison* section (a box in Export).
+
+### Recovery screening (Recovery tab)
+
+Screening recovery factors from the PVT model (`js/recovery.js`), with rock
+properties that start at typical defaults and can each be overridden. Every
+result carries its basis &mdash; method and reference, the PVT values used, each
+rock input marked *default* or *entered*, and its assumptions &mdash; and the
+summary shades the range each default spans across a typical interval.
+**Not a reserves or resources estimate (SPE-PRMS) and not a simulation
+forecast.**
+
+| Mechanism | Method | Output |
+|---|---|---|
+| Expansion above Pb | material balance with c<sub>w</sub>, c<sub>f</sub> | RF(p), Pi to Pb |
+| Solution-gas drive | Muskat (1945) tank, RK4, Corey k<sub>rg</sub>/k<sub>ro</sub> | RF, producing GOR, S<sub>g</sub> against p |
+| Water drive (oil) | Buckley&ndash;Leverett with the Welge tangent | displacement efficiency E<sub>d</sub> (complete sweep), f<sub>w</sub>, water cut |
+| Gas, depletion | p/z material balance | RF(p), p/z against recovery |
+| Gas, water drive | trapped gas, 1 &minus; (B<sub>gi</sub>/B<sub>g</sub>)(S<sub>gr</sub>/S<sub>gi</sub>) | RF |
+| Cross-check | Arps et al. (1967) API correlations | indicative RF |
+
+Defaults: Swi 0.20, c<sub>f</sub> from the case inputs, Sgc 0.05, Sorg 0.15,
+Sorw 0.25, Sgr 0.25, Corey exponents 2, k<sub>ro</sub> 1.0, k<sub>rg</sub> 0.8,
+k<sub>rw</sub> 0.3, economic water cut 98 %, abandonment at 10 % of the initial
+pressure (at least 100 psia), porosity 0.20 and 100 mD for the API
+cross-check. The tests check the gas material balance of the Muskat tank,
+piston-like Buckley&ndash;Leverett displacement, exact p/z recovery and the API
+formulas. The estimate, its basis and its curves go into the PDF report and a
+CSV download.
+
 ### Project files
 
 **Save project** writes the whole session to JSON (`js/project.js`: kind
@@ -448,6 +522,9 @@ pvt/
   js/tuning.js          regression against laboratory data, correlation ranking
   js/samples.js         screening of several PVT reports, field-wide regression
   js/eos.js             Peng-Robinson equation of state: C7+ split, stability, flash, envelope
+  js/contamination.js   oil-based mud contamination: skimming, subtraction, clean-oil correction
+  js/recovery.js        recovery screening: expansion, Muskat, Buckley-Leverett, p/z, API
+  js/compare.js         the Samples tab: comparable records of the accepted PVT reports
   js/reports.js         oil PVT reports: CSV import, QC checks, separator correction
   js/gas-reports.js     dry and wet gas PVT reports: import, QC, finalised z and viscosity
   js/project.js         project files: save and reopen a session
@@ -460,7 +537,7 @@ pvt/
   tests/run-tests.js    regression tests
 ```
 
-`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `eos.js`, `reports.js`, `gas-reports.js`, `project.js`, `export.js` and `report-pdf.js` are UMD modules: the same
+`correlations.js`, `pvt-model.js`, `tuning.js`, `samples.js`, `eos.js`, `contamination.js`, `recovery.js`, `compare.js`, `reports.js`, `gas-reports.js`, `project.js`, `export.js` and `report-pdf.js` are UMD modules: the same
 files that the page loads can be `require()`d from Node, so the library is
 usable in a scripted workflow.
 
@@ -487,7 +564,7 @@ console.log(Exp.cmg(tuned, 'field'));
 node pvt/tests/run-tests.js
 ```
 
-280 checks covering reference values for each correlation, the physical
+336 checks covering reference values for each correlation, the physical
 invariants (R<sub>s</sub>(P<sub>b</sub>) = R<sub>sb</sub>, B<sub>o</sub> peaking
 at P<sub>b</sub>, viscosity minimum at P<sub>b</sub>, monotonic B<sub>g</sub>),
 cross-agreement between the z-factor fits, deck structure and unit conversions
@@ -536,6 +613,10 @@ to build in metric units.
 * Without a report composition the phase envelope is schematic (see above). An
   envelope from a composition is an untuned equation of state with the C7+ known
   only by its MW and SG; expect saturation pressures within 10&ndash;15 %.
+* The mud-contamination correction assumes one homologous filtrate cut and
+  ideal mixing. Ester and olefin muds or a naturally curved carbon-number
+  profile weaken it; above about 10 wt % of the stock-tank oil a cleaner sample
+  is the better answer. Gas reports are not corrected.
 * The report QC flags inconsistencies; it does not decide. A failing report can
   be accepted &mdash; say why in the study.
 * The schematic phase envelope (see above). In oil mode only the bubble point
@@ -552,3 +633,5 @@ Aziz (1972); Gold, McCain & Jennings (1989); McCain (1990); Hall & Yarborough (1
 Abou-Kassem (1975); Beggs & Robinson (1975); Glaso (1980); Vasquez & Beggs
 (1980); Ng & Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain, Rollins &
 Villena-Lanzi (1988); Osif (1988); McCain (1991); Petrosky & Farshad (1993).
+Mud contamination: Katz & Firoozabadi (1978); MacMillan, Ginley & Dembicki
+(1997); Gozalpour et al. (2002).

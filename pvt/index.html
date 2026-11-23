@@ -6,8 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PhaseWiz – Black-Oil PVT Generator</title>
 <meta name="description" content="PhaseWiz: interactive PVT correlation generator for oil reservoirs and gas reservoirs (dry gas and wet gas) plus formation water, with simulator-ready export.">
-<link rel="icon" type="image/svg+xml" href="favicon.svg?v=1.7.2">
-<link rel="stylesheet" href="css/app.css?v=1.7.2">
+<link rel="icon" type="image/svg+xml" href="favicon.svg?v=1.8.0">
+<link rel="stylesheet" href="css/app.css?v=1.8.0">
 </head>
 <body>
 <header class="topbar">
@@ -218,7 +218,9 @@
       <button type="button" role="tab" id="tab-tables" aria-controls="panel-tables" aria-selected="false">Tables</button>
       <button type="button" role="tab" id="tab-compare" aria-controls="panel-compare" aria-selected="false">Correlation spread</button>
       <button type="button" role="tab" id="tab-reports" aria-controls="panel-reports" aria-selected="false" hidden>PVT reports &amp; QC</button>
+      <button type="button" role="tab" id="tab-samplecmp" aria-controls="panel-samplecmp" aria-selected="false" hidden>Samples</button>
       <button type="button" role="tab" id="tab-lab" aria-controls="panel-lab" aria-selected="false">Lab data &amp; tuning</button>
+      <button type="button" role="tab" id="tab-recovery" aria-controls="panel-recovery" aria-selected="false">Recovery</button>
       <button type="button" role="tab" id="tab-export" aria-controls="panel-export" aria-selected="false">Export</button>
       <button type="button" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false">Method</button>
     </div>
@@ -263,7 +265,7 @@
     <section id="panel-reports" role="tabpanel" aria-labelledby="tab-reports" hidden>
       <div class="lab-step">
         <h2><span class="step-no">1</span>PVT reports and their tests</h2>
-        <p class="hint" id="repHintTests">Enter each laboratory report as it was issued &mdash; composition, CCE, differential liberation, separator tests and viscosity &mdash; in the units the page shows. Paste a block from a spreadsheet into any cell, or import report files: one CSV per report, several at once. Download the template for the layout; a saved project keeps everything.</p>
+        <p class="hint" id="repHintTests">Enter each laboratory report as it was issued &mdash; composition, CCE, differential liberation, separator tests, viscosity and, for a sample drilled with oil-based mud, the stock-tank oil by carbon number &mdash; in the units the page shows. Paste a block from a spreadsheet into any cell, or import report files: one CSV per report, several at once. Download the template for the layout; a saved project keeps everything.</p>
         <div class="export-bar">
           <button type="button" id="btnRepAdd">Add report</button>
           <button type="button" id="btnRepImport">Import report files</button>
@@ -278,13 +280,13 @@
 
       <div class="lab-step" id="repStepCheck">
         <h2><span class="step-no">2</span>Check and correct</h2>
-        <p class="hint" id="repHintCheck">Every test is checked for internal consistency: bubble points that agree, the CCE Y-function, undersaturated volumes and densities, a stage-by-stage mass balance on the DL, the separator test against the bubble-point density, the composition, the bubble point it gives (Peng-Robinson) and the Hoffman equilibrium plot, the viscosity trends, and finally dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp on the corrected data. Rows that fail are marked in the tables above; untick them or correct them. Choose the corrections here.</p>
+        <p class="hint" id="repHintCheck">Every test is checked for internal consistency: bubble points that agree, the CCE Y-function, undersaturated volumes and densities, a stage-by-stage mass balance on the DL, the separator test against the bubble-point density, the composition, the bubble point it gives (Peng-Robinson) and the Hoffman equilibrium plot, the viscosity trends, the oil-based mud filtrate in the stock-tank oil (skimming and subtraction), and finally dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp on the corrected data. Rows that fail are marked in the tables above; untick them or correct them. Choose the corrections here.</p>
         <div id="repDetail"></div>
       </div>
 
       <div class="lab-step">
         <h2><span class="step-no">3</span>Finalised data</h2>
-        <p class="hint" id="repHintFinal">What the tuning will see, on the separator basis: DL stages corrected with B<sub>ofb</sub>/B<sub>odb</sub> below P<sub>b</sub>, CCE volumes times B<sub>ofb</sub> above it, viscosities on the matching pressures. Accept the report when you are satisfied with it.</p>
+        <p class="hint" id="repHintFinal">What the tuning will see, on the separator basis: DL stages corrected with B<sub>ofb</sub>/B<sub>odb</sub> below P<sub>b</sub>, CCE volumes times B<sub>ofb</sub> above it, viscosities on the matching pressures and, when a mud contamination is found, everything taken back to the clean oil. Accept the report when you are satisfied with it.</p>
         <div id="repFinal"></div>
       </div>
 
@@ -292,6 +294,13 @@
         <h2><span class="step-no">4</span>Send to tuning</h2>
         <div id="repSend"></div>
       </div>
+    </section>
+
+    <section id="panel-samplecmp" role="tabpanel" aria-labelledby="tab-samplecmp" hidden>
+      <p class="hint">Every accepted PVT report of this fluid system side by side, for reference: compositions, key properties, the
+        finalised curves against pressure, phase envelopes and trends with depth. Reports are accepted in step 3 of the
+        <strong>PVT reports &amp; QC</strong> tab; tick the boxes below to also show reports not yet accepted or failing QC.</p>
+      <div id="sampleCmpBody"></div>
     </section>
 
     <section id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" hidden>
@@ -394,6 +403,15 @@
       </div>
     </section>
 
+    <section id="panel-recovery" role="tabpanel" aria-labelledby="tab-recovery" hidden>
+      <div class="notice warn rec-banner" role="note"><span class="icon" aria-hidden="true">!</span>
+        <div><strong>Screening estimates only.</strong> Recovery here comes from the PVT model and a few rock properties that
+          start at typical defaults. It is not a reserves or resources estimate (SPE-PRMS) and not a simulation forecast:
+          there is no geology, no well, no rate and no time. Each result states its method, the PVT values it used, which rock
+          inputs are still defaults, and its assumptions.</div></div>
+      <div id="recoveryBody"></div>
+    </section>
+
     <section id="panel-export" role="tabpanel" aria-labelledby="tab-export" hidden>
       <!-- PDF report: its own panel and button, not an entry in the Format list -->
       <div class="pdf-opts" id="pdfOpts" role="group" aria-labelledby="pdfHead">
@@ -415,6 +433,8 @@
         <div class="pdf-sections" role="group" aria-label="Report sections">
           <label class="switch"><input type="checkbox" id="pdfPlots" checked> Key plots</label>
           <label class="switch"><input type="checkbox" id="pdfCalcs" checked> Key calculations and property table</label>
+          <label class="switch"><input type="checkbox" id="pdfRecovery" checked> Recovery screening</label>
+          <label class="switch"><input type="checkbox" id="pdfSamples" checked> Sample comparison (with laboratory data)</label>
           <label class="switch"><input type="checkbox" id="pdfMethod" checked> Method and limitations</label>
           <span id="pdfStatus" class="hint" role="status"></span>
         </div>
@@ -486,7 +506,10 @@
         <ul class="hint" style="padding-left:18px">
           <li><strong>Oil</strong> &mdash; bubble points agree (CCE, DL, reported); CCE Y-function linear in p; undersaturated c<sub>o</sub> and &rho; = &rho;<sub>b</sub>/(V/V<sub>sat</sub>); DL trends, stage-by-stage density mass balance and B<sub>t</sub>; separator test against the DL and the bubble-point density; composition total, C7+ Watson K, separator gas gravity, Hoffman plot (hydrocarbons) and the Peng&ndash;Robinson bubble point of the composition; viscosity trends; dB<sub>o</sub>/dp &lt; B<sub>g</sub>dR<sub>s</sub>/dp. DL to separator basis by Amyx et al. or the ratio form; CCE volumes times B<sub>ofb</sub> above P<sub>b</sub>; R<sub>s</sub> of the atmospheric DL stage left out of the tuning.</li>
           <li><strong>Gas (dry and wet)</strong> &mdash; composition total, C7+, separator gas gravity and Hoffman plot; the Peng&ndash;Robinson envelope of the well stream (reservoir temperature above the cricondentherm, separator inside it for a wet gas); well-stream gravity from the composition against McCain&rsquo;s recombination; laboratory against producing CGR; liquid dropout at reservoir temperature (a condensate); measured z against z from the composition (Kay, Kesler&ndash;Lee C7+, Wichert&ndash;Aziz, DAK); p&middot;V/z constant along the CCE; viscosity against Lee&ndash;Gonzalez&ndash;Eakin. The finalised data is z and gas viscosity against pressure, with the fluid description for the case inputs.</li>
+          <li><strong>Oil-based mud contamination</strong> &mdash; from the stock-tank oil composition by carbon number (wt %). <em>Skimming</em>: ln x<sub>n</sub> of a clean oil is a straight line in carbon number; the line is fitted outside the filtrate hump and the excess above it is the filtrate. <em>Subtraction</em>: the filtrate composition is removed in the proportion that makes the cleaned C8+ profile straightest. Correction, with v<sub>F</sub> = c&nbsp;&gamma;<sub>o</sub>/&gamma;<sub>F</sub> the filtrate volume fraction of the stock-tank oil: R<sub>s</sub>&prime; = R<sub>s</sub>/(1 &minus; v<sub>F</sub>); B<sub>o</sub>&prime; = (B<sub>o</sub> &minus; v<sub>F</sub>B<sub>F</sub>)/(1 &minus; v<sub>F</sub>); &gamma;<sub>o</sub>&prime; by volume mixing; dead-oil viscosity by Arrhenius blending; the bubble point by a Peng&ndash;Robinson flash of the cleaned composition (C1&ndash;C7+ interaction regressed to the measured P<sub>b</sub>) or by the Standing ratio. Saturated rows are stretched in pressure to the clean P<sub>b</sub>, undersaturated rows shifted. Under 5 wt % passes, 5&ndash;10 wt % warns, above 10 wt % fails.</li>
         </ul>
+        <h3>Comparing samples (Samples tab)</h3>
+        <p>The accepted reports of the fluid system side by side: composition by component (normalised to 100 mol %), stock-tank oil by carbon number where entered, a key-properties table from each report's finalised data, the finalised curves against pressure, Peng&ndash;Robinson phase envelopes from each composition (C1&ndash;C7+ interaction matched to the report's bubble point for oil), and trends with depth. The trend charts draw a least-squares line through the samples shown and name any sample more than two standard deviations off it &mdash; a prompt to check that sample, or a sign of compartments or a compositional gradient, not a verdict.</p>
         <h3>Tuning to laboratory data</h3>
         <p class="hint">On the <em>Lab data &amp; tuning</em> tab, measured values regress one multiplier per property, in the order the properties depend on each other. Each fit minimises the AARE of its own property over its own points; the published correlation (multiplier 1) is always a candidate, so tuning never worsens the fit.</p>
         <ol class="hint" style="padding-left:18px">
@@ -498,6 +521,16 @@
         </ol>
         <p class="hint">The multipliers and the fit before and after tuning are written into the header of every exported deck.</p>
 
+        <h3>How recovery is estimated (Recovery tab)</h3>
+        <p>Screening recovery factors driven by the PVT model, with a few rock properties that start at typical defaults (Swi 0.20, Sgc 0.05, Sorg 0.15, Sorw 0.25, Sgr 0.25, Corey exponents 2, abandonment at 10&nbsp;% of the initial pressure). Every default can be overridden, every result says which inputs it used and whether each is still a default, and the summary shades the range each default spans. <strong>These are not reserves or resources (SPE-PRMS) and not a simulation forecast</strong>: there is no geology, no well, no rate and no time.</p>
+        <ul>
+          <li><strong>Expansion above the bubble point</strong> &mdash; RF = [(B<sub>o</sub> &minus; B<sub>oi</sub>) + B<sub>oi</sub>(c<sub>w</sub>S<sub>wi</sub> + c<sub>f</sub>)(p<sub>i</sub> &minus; p)/(1 &minus; S<sub>wi</sub>)] / B<sub>o</sub>. Usually a few per cent.</li>
+          <li><strong>Solution-gas drive</strong> (Muskat, 1945) &mdash; one tank at uniform pressure from P<sub>b</sub> to abandonment: dS<sub>o</sub>/dp from B<sub>o</sub>, R<sub>s</sub>, B<sub>g</sub>, &mu;<sub>o</sub>/&mu;<sub>g</sub> and Corey k<sub>rg</sub>/k<sub>ro</sub>, integrated by Runge&ndash;Kutta. Gives recovery, producing GOR and gas saturation against pressure. No gas cap, no gravity segregation, no aquifer.</li>
+          <li><strong>Water drive</strong> (Buckley&ndash;Leverett, 1942; Welge, 1952) &mdash; fractional flow from &mu;<sub>o</sub>/&mu;<sub>w</sub> at the stated pressure and Corey water&ndash;oil curves; the Welge tangent gives breakthrough and the displacement efficiency E<sub>d</sub> at the economic water cut. E<sub>d</sub> assumes complete sweep: field recovery is E<sub>d</sub> &times; sweep efficiency, which depends on geology and wells and is not estimated.</li>
+          <li><strong>Gas reservoirs</strong> &mdash; volumetric depletion RF = 1 &minus; (p/z)/(p<sub>i</sub>/z<sub>i</sub>) with z from the PVT model; water drive with trapped gas RF = 1 &minus; (B<sub>gi</sub>/B<sub>g</sub>)(S<sub>gr</sub>/S<sub>gi</sub>).</li>
+          <li><strong>API cross-check</strong> (Arps et al., 1967) &mdash; regression of 1960s field data for solution-gas and water-drive recovery; needs porosity and permeability (defaults 0.20 and 100&nbsp;mD) and has wide scatter, so it is shown as indicative only.</li>
+          <li><strong>When not to use it</strong> &mdash; a gas cap, strong or partial aquifer support during depletion, gravity drainage, heavy oil under thermal or chemical recovery, near-critical or condensate fluids, and any decision that needs reserves.</li>
+        </ul>
         <h3>Limitations worth stating in a report</h3>
         <ul class="hint" style="padding-left:18px">
           <li>Correlations carry 5&ndash;20% uncertainty on B<sub>o</sub> and R<sub>s</sub>, and more on viscosity. Check the <em>Correlation spread</em> tab before trusting a single number.</li>
@@ -506,10 +539,11 @@
           <li>Each correlation carries the published applicability range of the data it was fitted to; inputs outside it raise a QC warning on the Summary tab.</li>
           <li>Tuning adjusts one multiplier per property; it bends a correlation towards the data but cannot change the shape of its curve. A multiplier that stops at its search limit means the correlation does not suit the fluid &mdash; rank the correlations and pick another.</li>
           <li>The schematic phase envelope is a construction anchored to the calculated bubble point &mdash; never quote its critical pressure or cricondentherm as data. The envelope from a composition is an equation-of-state estimate with a C7+ known only by its MW and SG.</li>
+          <li>The mud-contamination correction assumes one homologous filtrate cut and ideal mixing. Ester and olefin muds, or a crude whose carbon-number profile is naturally curved, weaken it; above about 10 wt % of the stock-tank oil a cleaner sample is the better answer.</li>
           <li>The report QC flags inconsistencies; it does not decide. A report that fails can still be accepted &mdash; say why in the study.</li>
         </ul>
         <h3>References</h3>
-        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993). Report QC and the equation of state: Hoffman, Crump &amp; Hocott (1953); Amyx, Bass &amp; Whiting (1960); Peng &amp; Robinson (1976); Kesler &amp; Lee (1976); Standing (1977); Michelsen (1982); Katz (1983); Whitson (1983); Soreide (1989).</p>
+        <p class="hint">Standing (1947); Lasater (1958); Chew &amp; Connally (1959); Beal (1946); Carr, Kobayashi &amp; Burrows (1954); Lee, Gonzalez &amp; Eakin (1966); Wichert &amp; Aziz (1972); Gold, McCain &amp; Jennings (1989); McCain (1990); Hall &amp; Yarborough (1973); Beggs &amp; Brill (1973); Dranchuk &amp; Abou-Kassem (1975); Beggs &amp; Robinson (1975); Glaso (1980); Vasquez &amp; Beggs (1980); Ng &amp; Egbogah (1983); Sutton (1985); Al-Marhoun (1988); McCain et al. (1988, 1991); Osif (1988); Petrosky &amp; Farshad (1993). Report QC and the equation of state: Hoffman, Crump &amp; Hocott (1953); Amyx, Bass &amp; Whiting (1960); Peng &amp; Robinson (1976); Kesler &amp; Lee (1976); Standing (1977); Michelsen (1982); Katz (1983); Whitson (1983); Soreide (1989). Mud contamination: Katz &amp; Firoozabadi (1978); MacMillan, Ginley &amp; Dembicki (1997); Gozalpour et al. (2002). Recovery: Buckley &amp; Leverett (1942); Muskat (1945); Welge (1952); Craft &amp; Hawkins (1959); Havlena &amp; Odeh (1963); Arps et al. (1967); Dake (1978).</p>
       </div>
     </section>
   </main>
@@ -529,24 +563,27 @@
 <footer class="foot">
   <div class="foot-inner">
     <span>Correlation-based PVT is an estimate, not a measurement. Replace these tables with laboratory data before booking reserves or running a full-field history match.</span>
-    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; PolyForm Noncommercial 1.0.0 &middot; runs entirely in your browser &middot; <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version">v1.7.2 &ndash; what&rsquo;s new</a></span>
+    <span class="foot-meta"><strong class="foot-copy">&copy; 2026 Ankaj Kumar Sinha</strong> &middot; PolyForm Noncommercial 1.0.0 &middot; runs entirely in your browser &middot; <a href="https://github.com/authorankaj-glitch/Black-Oil-PVT-Generator/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version">v1.8.0 &ndash; what&rsquo;s new</a></span>
   </div>
 </footer>
 
 <!-- ?v= is the release number: bump it with the footer version so browsers fetch the new files -->
-<script src="js/correlations.js?v=1.7.2"></script>
-<script src="js/pvt-model.js?v=1.7.2"></script>
-<script src="js/tuning.js?v=1.7.2"></script>
-<script src="js/samples.js?v=1.7.2"></script>
-<script src="js/eos.js?v=1.7.2"></script>
-<script src="js/reports.js?v=1.7.2"></script>
-<script src="js/gas-reports.js?v=1.7.2"></script>
-<script src="js/project.js?v=1.7.2"></script>
-<script src="js/export.js?v=1.7.2"></script>
-<script src="js/report-pdf.js?v=1.7.2"></script>
-<script src="js/charts.js?v=1.7.2"></script>
-<script src="js/fluid-state.js?v=1.7.2"></script>
-<script src="js/visuals.js?v=1.7.2"></script>
-<script src="js/app.js?v=1.7.2"></script>
+<script src="js/correlations.js?v=1.8.0"></script>
+<script src="js/pvt-model.js?v=1.8.0"></script>
+<script src="js/tuning.js?v=1.8.0"></script>
+<script src="js/samples.js?v=1.8.0"></script>
+<script src="js/eos.js?v=1.8.0"></script>
+<script src="js/contamination.js?v=1.8.0"></script>
+<script src="js/recovery.js?v=1.8.0"></script>
+<script src="js/compare.js?v=1.8.0"></script>
+<script src="js/reports.js?v=1.8.0"></script>
+<script src="js/gas-reports.js?v=1.8.0"></script>
+<script src="js/project.js?v=1.8.0"></script>
+<script src="js/export.js?v=1.8.0"></script>
+<script src="js/report-pdf.js?v=1.8.0"></script>
+<script src="js/charts.js?v=1.8.0"></script>
+<script src="js/fluid-state.js?v=1.8.0"></script>
+<script src="js/visuals.js?v=1.8.0"></script>
+<script src="js/app.js?v=1.8.0"></script>
 </body>
 </html>

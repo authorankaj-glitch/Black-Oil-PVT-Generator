@@ -151,6 +151,10 @@
 
     var pts = [];
     o.series.forEach(function (s) { s.points.forEach(function (p) { pts.push(p); }); });
+    /* shaded bands ({ slot, points: [{ x, lo, hi }] }) count in the y range */
+    (o.bands || []).forEach(function (b) {
+      b.points.forEach(function (p) { pts.push({ x: p.x, y: p.lo }); pts.push({ x: p.x, y: p.hi }); });
+    });
     if (!pts.length) return;
     var xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
     var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
@@ -196,14 +200,28 @@
     yt.textContent = o.yLabel;
     svg.appendChild(yt);
 
-    /* bubble-point (or other) annotation */
-    if (o.marker && o.marker.x >= x0 && o.marker.x <= x1) {
-      svg.appendChild(el('line', { class: 'marker-line', x1: sx(o.marker.x), x2: sx(o.marker.x),
+    /* bubble-point (or other) annotations: one marker, or several (markers),
+       labels staggered so neighbours do not overprint */
+    var marks = (o.markers || []).concat(o.marker ? [o.marker] : []);
+    marks.forEach(function (mk, i) {
+      if (!(mk.x >= x0 && mk.x <= x1)) return;
+      svg.appendChild(el('line', { class: 'marker-line', x1: sx(mk.x), x2: sx(mk.x),
         y1: M.top, y2: M.top + hPlot }));
-      var mt = el('text', { class: 'marker-label', x: sx(o.marker.x) + 5, y: M.top + 11 });
-      mt.textContent = o.marker.label;
+      var right = sx(mk.x) > w - M.right - 70;
+      var mt = el('text', { class: 'marker-label', x: sx(mk.x) + (right ? -5 : 5), y: M.top + 11 + 13 * (i % 2),
+        'text-anchor': right ? 'end' : 'start' });
+      mt.textContent = mk.label;
       svg.appendChild(mt);
-    }
+    });
+
+    /* bands under the series */
+    (o.bands || []).forEach(function (b) {
+      var bp = b.points.slice().sort(function (a, c) { return a.x - c.x; });
+      if (bp.length < 2) return;
+      var d = bp.map(function (p, i) { return (i ? 'L' : 'M') + sx(p.x).toFixed(2) + ' ' + sy(p.hi).toFixed(2); }).join(' ') +
+        ' ' + bp.slice().reverse().map(function (p) { return 'L' + sx(p.x).toFixed(2) + ' ' + sy(p.lo).toFixed(2); }).join(' ') + ' Z';
+      svg.appendChild(el('path', { class: 'band slot-' + b.slot, d: d }));
+    });
 
     /* series: laboratory points as open markers, everything else as lines */
     var lines = o.series.filter(function (s) { return !s.scatter && s.points.length; });
@@ -257,7 +275,9 @@
     svg.appendChild(overlay);
 
     var idx = -1;
-    function show(i, clientX) {
+    /* quiet: do not broadcast (the call came from another linked chart);
+       noTip: crosshair and dots only (the resting cursor) */
+    function show(i, quiet, noTip) {
       if (!lines.length) return;
       var base = lines[0].points;
       idx = Math.max(0, Math.min(base.length - 1, i));
@@ -270,7 +290,10 @@
       head.textContent = (o.fmtX ? o.fmtX(px) : fmtNum(px)) + ' ' + (o.xUnit || '');
       self.tip.appendChild(head);
       lines.forEach(function (s, k) {
-        var p = s.points[Math.min(idx, s.points.length - 1)];
+        /* each series at its point nearest the crosshair: overlays of
+           different samples need not share pressures */
+        var p = s.points[0], pd = Infinity;
+        s.points.forEach(function (q) { var dd = Math.abs(q.x - px); if (dd < pd) { pd = dd; p = q; } });
         self.hoverDots[k].setAttribute('cx', sx(p.x));
         self.hoverDots[k].setAttribute('cy', sy(p.y));
         var row = document.createElement('div');
@@ -287,13 +310,13 @@
         row.appendChild(nm);
         self.tip.appendChild(row);
       });
-      self.tip.hidden = false;
+      self.tip.hidden = !!noTip;
       var left = sx(px) + 14;
       if (left + 190 > w) left = sx(px) - 190;
       self.tip.style.left = Math.max(4, left) + 'px';
       self.tip.style.top = (M.top + 6) + 'px';
       /* broadcast the hovered x so cursor-linked visuals follow the pointer */
-      if (o.onCursor) o.onCursor(px);
+      if (o.onCursor && !quiet) o.onCursor(px);
     }
     function hide() {
       self.tip.hidden = true;
@@ -337,13 +360,27 @@
       show(nearest(ev.clientX));
       if (picks.length) { setHot(pickAt(ev.clientX, ev.clientY)); hintFor(hot); }
     });
-    overlay.addEventListener('pointerleave', function () { setHot(null); hide(); });
+    overlay.addEventListener('pointerleave', function () {
+      setHot(null); hide();
+      if (o.onLeave) o.onLeave();
+    });
     overlay.addEventListener('click', function (ev) {
       var q = picks.length ? pickAt(ev.clientX, ev.clientY) : null;
       if (q) o.onPick(q.ref);
     });
     svg.addEventListener('focus', function () { show(idx < 0 ? 0 : idx); });
-    svg.addEventListener('blur', hide);
+    svg.addEventListener('blur', function () { hide(); if (o.onLeave) o.onLeave(); });
+
+    /* linked tracking: another chart (or the pressure cursor) puts this
+       chart's crosshair at x, in this chart's x units; null clears it */
+    this.track = function (xv, withTip) {
+      self._tracked = xv;      /* kept across redraws (resize, tab reveal) */
+      if (xv === null || xv === undefined || !isFinite(xv) || !lines.length) { hide(); return; }
+      if (xv < x0 || xv > x1) { hide(); return; }
+      var base = lines[0].points, best = 0, bd = Infinity;
+      base.forEach(function (p, i) { var d = Math.abs(p.x - xv); if (d < bd) { bd = d; best = i; } });
+      show(best, true, !withTip);
+    };
     svg.addEventListener('keydown', function (ev) {
       if (ev.key === 'ArrowRight') { show(idx + 1); ev.preventDefault(); }
       else if (ev.key === 'ArrowLeft') { show(idx - 1); ev.preventDefault(); }
@@ -357,7 +394,11 @@
     });
 
     this.plot.insertBefore(svg, this.tip);
+    if (this._tracked !== undefined && this._tracked !== null) this.track(this._tracked, false);
   };
+
+  /* before the first draw (hidden tab) there is nothing to track */
+  Chart.prototype.track = function () { };
 
   Chart.prototype.update = function (opts) {
     this.opts = opts;

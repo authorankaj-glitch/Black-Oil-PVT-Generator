@@ -279,10 +279,27 @@
     };
   }
 
+  /* Charts against pressure (those that feed the pressure cursor) track
+     together: hovering one puts the crosshair, and its readout, at the same
+     pressure on every other, on the Summary and Charts tabs alike; at rest
+     they all sit at the pressure cursor. */
   function chartInto(container, key, opts) {
     var host = document.createElement('div');
     container.appendChild(host);
+    if (opts.onCursor) {
+      opts.linked = true;
+      opts.onLeave = function () { trackCharts(false); };
+    }
     charts[key] = Chart.create(host, opts);
+    if (opts.linked && cursorP !== null && model) charts[key].track(conv('p', cursorP), false);
+  }
+  function trackCharts(withTip) {
+    if (cursorP === null || !model) return;
+    var x = conv('p', cursorP);
+    Object.keys(charts).forEach(function (k) {
+      var c = charts[k];
+      if (c.opts && c.opts.linked) c.track(x, withTip && c.root.offsetParent !== null);
+    });
   }
 
   var CHART_DEFS = [
@@ -397,6 +414,7 @@
     var slider = $('pCursor');
     if (source !== 'slider') slider.value = String(conv('p', cursorP));
     $('cursorReadout').textContent = fmt('p', cursorP) + ' ' + label('p');
+    trackCharts(source === 'chart');
     var st = $('cursorState');
     var atSat = atSaturation(cursorP), twoPhase;
     if (model.fluid === 'gas') {
@@ -1566,18 +1584,24 @@
 
   /* The PDF report's options: what the report panel of the Export tab shows,
      plus the project name from the case inputs for the cover. */
-  function reportOpts() {
+  /* full: compute the recovery estimate (the PDF); the outline preview,
+     redrawn on every keystroke, reuses the last one or just names it */
+  function reportOpts(full) {
     return {
       units: $('pdfUnits').value, title: $('pdfTitle').value, preparedBy: $('pdfAuthor').value,
       project: $('projectName').value,
-      plots: $('pdfPlots').checked, calcs: $('pdfCalcs').checked, method: $('pdfMethod').checked
+      plots: $('pdfPlots').checked, calcs: $('pdfCalcs').checked, method: $('pdfMethod').checked,
+      recovery: $('pdfRecovery').checked && Rec && model ? (full ? recoveryFor(model) : recFresh(model)) : null,
+      recoveryOn: $('pdfRecovery').checked,
+      samples: $('pdfSamples').checked && full ? cmpForReport() : null,
+      samplesOn: $('pdfSamples').checked && effectiveMode() !== 'none' && fluidReports().length > 0
     };
   }
   function saveReportOpts() {
     var o = reportOpts();
     try {
       localStorage.setItem('pvt.report', JSON.stringify({ title: o.title, preparedBy: o.preparedBy,
-        units: o.units, plots: o.plots, calcs: o.calcs, method: o.method }));
+        units: o.units, plots: o.plots, calcs: o.calcs, method: o.method, recovery: o.recoveryOn, samples: $('pdfSamples').checked }));
     } catch (e) { /* ignore */ }
   }
   function restoreReportOpts() {
@@ -1590,6 +1614,8 @@
     $('pdfPlots').checked = o.plots !== false;
     $('pdfCalcs').checked = o.calcs !== false;
     $('pdfMethod').checked = o.method !== false;
+    $('pdfRecovery').checked = o.recovery !== false;
+    $('pdfSamples').checked = o.samples !== false;
   }
 
   /* The report panel's "Report contents" preview. */
@@ -1619,7 +1645,7 @@
   }
 
   function downloadReport() {
-    var bytes, opts = reportOpts();
+    var bytes, opts = reportOpts(true);
     try { bytes = Report.build(model, opts); } catch (e) {
       $('pdfStatus').textContent = 'The report could not be built: ' + e.message;
       return;
@@ -1693,7 +1719,8 @@
     inputs[other] = back && back.inputs ? back : null;
     return { name: $('projectName').value, fluid: fluid, units: units, labMode: labMode,
              inputs: inputs, lab: lab, samples: samples,
-             reports: { list: reports.list, pick: reports.pick, envSource: envSource } };
+             reports: { list: reports.list, pick: reports.pick, envSource: envSource },
+             recovery: recInputs };
   }
 
   function projectSay(text) { $('projectStatus').textContent = text; }
@@ -1730,6 +1757,7 @@
         localStorage.setItem('pvt.reports', JSON.stringify({ list: p.reports.list, pick: p.reports.pick }));
         localStorage.setItem('pvt.envSource', JSON.stringify(p.reports.envSource || { oil: null, gas: null }));
         localStorage.setItem('pvt.projectName', p.name);
+        localStorage.setItem('pvt.recovery', JSON.stringify(p.recovery || { oil: {}, gas: {} }));
       } catch (e) {
         projectSay('This browser blocks the storage the page needs to open a project.');
         return;
@@ -1813,6 +1841,8 @@
     renderLabResults();
     renderSamples();
     renderExport();
+    renderRecovery();
+    renderSampleCmp();
     persist(inp);
   }
 
@@ -2565,7 +2595,7 @@
    * PVT reports: raw laboratory tests, QC, corrections, finalised data
    * ================================================================ */
 
-  var Rep = window.PVTReports, GRep = window.PVTGasReports;
+  var Rep = window.PVTReports, GRep = window.PVTGasReports, Mud = window.PVTMud, Rec = window.PVTRecovery, Cmp = window.PVTCompare;
   var reports = { list: [], pick: null };
   /* the module that owns a report: oil (reports.js) or gas (gas-reports.js) */
   function repApi(rep) { return rep && rep.fluid === 'gas' && GRep ? GRep : Rep; }
@@ -2582,7 +2612,8 @@
     { key: 'cce', title: 'Constant composition expansion (CCE)', cols: 'cce' },
     { key: 'dl', title: 'Differential liberation (DL)', cols: 'dl' },
     { key: 'sep', title: 'Separator tests' },
-    { key: 'visc', title: 'Viscosity', cols: 'visc' }
+    { key: 'visc', title: 'Viscosity', cols: 'visc' },
+    { key: 'mud', title: 'Mud contamination (stock-tank oil by carbon number)', cols: 'mud' }
   ];
   var REP_FIELDS = [
     { k: 'tempF', kind: 'T', head: 'Reservoir temperature', get: function (r) { return r.tempF; }, set: function (r, v) { r.tempF = v; } },
@@ -2624,14 +2655,22 @@
     comp: [{ head: 'C7+ molecular weight', unit: 'g/mol', get: function (r) { return r.comp.mw7; }, set: function (r, v) { r.comp.mw7 = v; } },
            { head: 'C7+ specific gravity', unit: '60/60 °F', get: function (r) { return r.comp.sg7; }, set: function (r, v) { r.comp.sg7 = v; } }],
     dl: [{ head: 'Residual oil gravity', unit: 'API at 60 °F', get: function (r) { return r.dl.apiResidual; }, set: function (r, v) { r.dl.apiResidual = v; } }],
-    visc: [{ head: 'Dead-oil viscosity at T<sub>res</sub>', kind: 'mu', get: function (r) { return r.visc.muod; }, set: function (r, v) { r.visc.muod = v; } }]
+    visc: [{ head: 'Dead-oil viscosity at T<sub>res</sub>', kind: 'mu', get: function (r) { return r.visc.muod; }, set: function (r, v) { r.visc.muod = v; } }],
+    mud: [{ head: 'Filtrate specific gravity', unit: '60/60 °F (blank: 0.80)', get: function (r) { return r.mud.sgF; }, set: function (r, v) { r.mud.sgF = v; } },
+          { head: 'Filtrate viscosity at T<sub>res</sub>', kind: 'mu', get: function (r) { return r.mud.muF; }, set: function (r, v) { r.mud.muF = v; } },
+          { head: 'Filtrate volume factor at T<sub>res</sub>', unit: 'bbl/bbl (blank: thermal expansion)', get: function (r) { return r.mud.bF; }, set: function (r, v) { r.mud.bF = v; } },
+          { head: 'Fit the clean trend from', unit: 'carbon number', get: function (r) { return r.mud.fitFrom; },
+            set: function (r, v) { r.mud.fitFrom = v === null ? 8 : Math.max(6, Math.round(v)); } },
+          { head: 'Filtrate range from', unit: 'carbon number (blank: automatic)', get: function (r) { return r.mud.winFrom; }, set: function (r, v) { r.mud.winFrom = v === null ? null : Math.round(v); } },
+          { head: 'Filtrate range to', unit: 'carbon number', get: function (r) { return r.mud.winTo; }, set: function (r, v) { r.mud.winTo = v === null ? null : Math.round(v); } }]
   };
   var TEST_HINTS = {
     comp: 'Mole percent of the reservoir fluid, and of the separator gas and liquid when the report gives them (they drive the Hoffman equilibrium check). There is no Use column here: correct a wrong analysis rather than dropping a component.',
     cce: 'Relative volume V/Vsat at reservoir temperature; 1 at the saturation pressure. Densities above P<sub>b</sub> are optional and check the volumes.',
     dl: 'As reported: R<sub>sd</sub> in scf per barrel of residual oil, B<sub>od</sub> in barrels per barrel of residual oil, starting at P<sub>b</sub>. Gas gravity is that of the gas liberated at the stage.',
     sep: 'One block per separator test. Stage GOR in scf per stock-tank barrel; the last stage is the stock tank. The test marked "Use" supplies R<sub>sfb</sub>, B<sub>ofb</sub>, the API and the gas gravity - pick the one matching the field separators.',
-    visc: 'Live-oil viscosity at reservoir temperature; gas viscosity is optional (usually calculated by the laboratory).'
+    visc: 'Live-oil viscosity at reservoir temperature; gas viscosity is optional (usually calculated by the laboratory).',
+    mud: 'For a sample drilled with oil-based mud: the stock-tank oil composition by carbon number in weight per cent, as the gas chromatograph reports it (C6 to C30+ or beyond), and, when the laboratory analysed it, the mud filtrate (base oil) in the next column. The filtrate shows as a hump above the straight line of a clean oil on the semi-log plot below. Skimming needs only the oil; subtraction also needs the filtrate. Untick a carbon number to leave it out of the fit. Leave the table empty for a clean sample.'
   };
 
   function repColumns(rep, key) { return repApi(rep).COLS[key]; }
@@ -2650,6 +2689,7 @@
   }
   function repCellValue(col, str) {
     if (col.text) return String(str || '').trim().slice(0, 12);
+    if (col.cn) { var m = /^\s*c?\s*(\d{1,2})/i.exec(String(str || '')); return m ? +m[1] : null; }
     return labCellValue(col, str);
   }
   function repById(id) { return reports.list.filter(function (r) { return r.id === id; })[0] || null; }
@@ -2698,6 +2738,11 @@
     var hide = effectiveMode() === 'none';
     tab.hidden = hide;
     if (hide && tab.getAttribute('aria-selected') === 'true') $('tab-summary').click();
+    var st = $('tab-samplecmp');
+    if (st) {
+      st.hidden = hide;
+      if (hide && st.getAttribute('aria-selected') === 'true') $('tab-summary').click();
+    }
   }
 
   /* ---------- report list and cards ---------- */
@@ -2841,6 +2886,7 @@
     if (key === 'comp') return rep.comp.rows.filter(function (q) { return q.z !== null || q.y !== null || q.x !== null; }).length;
     if (key === 'sep') return rep.sep.tests.filter(function (t) { return t.stages.some(function (s) { return s.gor !== null; }); }).length;
     if (key === 'recomb') return ['pSep', 'tSep', 'gg', 'cgr', 'api'].filter(function (k) { return rep.recomb[k] !== null; }).length;
+    if (key === 'mud') return rep.mud ? rep.mud.rows.filter(function (q) { return q.n !== null && q.w !== null; }).length : 0;
     return rep[key].rows.filter(function (q) { return q.p !== null; }).length;
   }
   function testMeta(rep, key) {
@@ -2849,6 +2895,7 @@
     if (key === 'comp') return n + ' components';
     if (key === 'sep') return n + (n > 1 ? ' tests' : ' test');
     if (key === 'recomb') return n + ' of 5 values';
+    if (key === 'mud') return n + ' carbon numbers' + (Mud && Mud.hasFiltrate(rep.mud) ? ', with filtrate' : '');
     return n + (n > 1 ? ' pressures' : ' pressure');
   }
 
@@ -2874,6 +2921,13 @@
       var sc = document.createElement('div'); sc.className = 'sample-scalars';
       scal.forEach(function (f) { sc.appendChild(scalarField(rep, f.head, f.kind, f.unit, f.get, f.set)); });
       body.appendChild(sc);
+    }
+    if (t.key === 'mud') {
+      var pl = document.createElement('label'); pl.className = 'switch';
+      var pc = document.createElement('input'); pc.type = 'checkbox'; pc.checked = rep.mud.plus !== false;
+      pc.addEventListener('change', function () { rep.mud.plus = pc.checked; reportsChanged(); });
+      pl.appendChild(pc); pl.appendChild(document.createTextNode(' The last carbon number is a plus fraction (kept in the totals, not fitted)'));
+      body.appendChild(pl);
     }
     if (t.key === 'sep') body.appendChild(sepEditor(rep));
     else if (t.cols) body.appendChild(gridEditor(rep, t.key, rep[t.key].rows, repColumns(rep, t.cols), { use: t.key !== 'comp', fixed: t.key === 'comp' }));
@@ -3154,7 +3208,19 @@
     boxes.className = 'rep-boxes';
     boxes.appendChild(settingCheck('Smooth the undersaturated CCE volumes', rep.settings.smoothCce, function (v) { rep.settings.smoothCce = v; }));
     boxes.appendChild(settingCheck('Normalise the composition to 100 mol %', rep.settings.normalise, function (v) { rep.settings.normalise = v; }));
+    if (Mud && Mud.hasData(rep.mud)) {
+      boxes.appendChild(settingCheck('Correct the finalised data for mud contamination', rep.mud.apply, function (v) { rep.mud.apply = v; }));
+    }
     set.appendChild(boxes);
+    if (Mud && Mud.hasData(rep.mud)) {
+      set.appendChild(settingSelect('Mud contamination from', rep.mud.method, [
+        ['auto', 'Automatic: subtraction when the filtrate is entered, else skimming'],
+        ['skim', 'Skimming: excess above the clean trend'],
+        ['subtract', 'Subtraction: remove the filtrate composition']], function (v) { rep.mud.method = v; }));
+      set.appendChild(settingSelect('Clean bubble point from', rep.mud.pbFrom, [
+        ['eos', 'Peng-Robinson: flash the cleaned composition'],
+        ['corr', 'Standing ratio: Pb × Pb(clean) / Pb(measured)']], function (v) { rep.mud.pbFrom = v; }));
+    }
     host.appendChild(set);
 
     if (q.error) host.appendChild(notice('error', '✕', 'The checks stopped: ' + q.error));
@@ -3182,7 +3248,8 @@
     var grid = document.createElement('div');
     grid.className = 'chart-grid samples-chart rep-charts';
     host.appendChild(grid);
-    if (rep.fluid === 'gas') gasReportCharts(grid, rep, q); else reportCharts(grid, rep, q);
+    if (rep.fluid === 'gas') gasReportCharts(grid, rep, q);
+    else { reportCharts(grid, rep, q); if (Mud) mudCharts(grid, rep, q.mud); }
 
     renderReportFinal(rep, q);
   }
@@ -3446,6 +3513,46 @@
     }
   }
 
+  /* Oil-based mud: the stock-tank oil on the semi-log plot the skimming
+     reads, and the subtraction's misfit against the contamination tried. */
+  function mudCharts(grid, rep, est) {
+    var u = est && est.use;
+    if (!u || u.error || !u.rows) return;
+    var rows = u.rows.filter(function (r) { return !r.plus && r.n >= 6; });
+    var Z = rows.reduce(function (a, r) { return a + (r.w > 0 ? r.w / Mud.mwOf(r.n) : 0); }, 0);
+    if (!(Z > 0)) return;
+    var lg = function (w, n) { return Math.log(100 * w / Mud.mwOf(n) / Z) / Math.LN10; };
+    var fTot = rows.reduce(function (a, r) { return a + (r.f || 0); }, 0) + u.rows.filter(function (r) { return r.plus; }).reduce(function (a, r) { return a + (r.f || 0); }, 0);
+    var used = rows.filter(function (r) { return r.use && r.w > 0; });
+    /* the filtrate's tails would stretch the axis and flatten the hump: show it where the oil is */
+    var yLow = used.reduce(function (a, r) { return Math.min(a, lg(r.w, r.n)); }, Infinity) - 0.25;
+    var series = [
+      { name: 'Clean trend', slot: 2, points: rows.filter(function (r) { return r.wFit > 0; }).map(function (r) { return { x: r.n, y: lg(r.wFit, r.n) }; }) },
+      { name: 'Stock-tank oil', slot: 1, scatter: true, points: used.map(function (r) { return { x: r.n, y: lg(r.w, r.n) }; }) },
+      { name: 'Cleaned oil', slot: 3, scatter: true, points: used.filter(function (r) { return r.inHump && r.wClean > 0 && Math.abs(r.wClean - r.w) > 1e-9; })
+          .map(function (r) { return { x: r.n, y: lg(r.wClean, r.n) }; }) },
+      { name: 'Filtrate share', slot: 4, points: fTot > 0 ? rows.filter(function (r) { return r.f > 0; })
+          .map(function (r) { return { x: r.n, y: lg(u.c * u.total * r.f / fTot, r.n) }; }).filter(function (o) { return o.y >= yLow; }) : [] },
+      { name: 'Left out', slot: 1, scatter: true, excluded: true, points: rows.filter(function (r) { return !r.use && r.w > 0; }).map(function (r) { return { x: r.n, y: lg(r.w, r.n) }; }) }
+    ].filter(function (s) { return s.points.length; });
+    repChart(grid, 'mud', {
+      title: 'Stock-tank oil by carbon number', subtitle: (u.method === 'skim' ? 'Skimming' : 'Subtraction') + ': ' + (100 * u.c).toFixed(1) +
+        ' wt % mud filtrate' + (u.hump ? ', C' + u.hump[0] + ' – C' + u.hump[1] : '') + '. A clean oil falls on the straight line.',
+      xLabel: 'Carbon number', yLabel: 'log₁₀ (mol %)', series: series,
+      fmtX: function (v) { return 'C' + Math.round(v); },
+      fmtY: function (v) { return Number(Math.pow(10, v).toPrecision(3)) + ' mol %'; }
+    });
+    var d = est.subtract;
+    if (d && !d.error && d.curve) {
+      repChart(grid, 'mudsub', {
+        title: 'Subtraction: straightness against contamination', subtitle: 'The contamination is the minimum: the cleaned C' + rep.mud.fitFrom + '+ profile is straightest there',
+        xLabel: 'Filtrate in the stock-tank oil (wt %)', yLabel: 'RMS misfit of ln x (–)', marker: { x: 100 * d.c, label: (100 * d.c).toFixed(1) + ' %' },
+        series: [{ name: 'Misfit', slot: 1, points: d.curve.filter(function (o) { return o.rms !== null; }).map(function (o) { return { x: 100 * o.c, y: o.rms }; }) }],
+        fmtX: function (v) { return v.toFixed(2); }, fmtY: function (v) { return v.toFixed(4); }
+      });
+    }
+  }
+
   /* Step 3: the finalised data set and the engineer's acceptance. */
   function renderReportFinal(rep, q) {
     var host = $('repFinal');
@@ -3462,11 +3569,16 @@
     tile(tiles, 'Stock-tank oil', v(fl.api, function (x) { return x.toFixed(1); }), 'API');
     tile(tiles, 'Gas gravity', v(fl.gammaG, function (x) { return x.toFixed(4); }), 'air = 1');
     tile(tiles, 'Dead-oil viscosity', v(fin.muod, function (x) { return fmt('mu', x); }), label('mu'));
+    if (fin.mud) tile(tiles, 'Mud filtrate', (100 * fin.mud.c).toFixed(1), 'wt % of STO');
     host.appendChild(tiles);
     /* tile() writes its label as text; let the subscripts render */
     tiles.querySelectorAll('.tile-label, .tile .label').forEach(function (e) { if (/&lt;sub&gt;|<sub>/.test(e.innerHTML)) e.innerHTML = e.textContent; });
 
     (fin.notes || []).forEach(function (n) { host.appendChild(notice('info', 'i', n)); });
+    if (fin.mud) host.appendChild(mudTable(fin.mud));
+    else if (q.mud && q.mud.use && !q.mud.use.error && rep.mud && rep.mud.apply === false) {
+      host.appendChild(notice('warn', '!', (100 * q.mud.use.c).toFixed(1) + ' wt % mud filtrate is estimated in the stock-tank oil, but the correction is off: the finalised data are those of the contaminated sample.'));
+    }
 
     var wrap = document.createElement('div');
     wrap.className = 'table-wrap';
@@ -3506,6 +3618,32 @@
       p.textContent = 'Some checks fail. You can still accept the report - the engineer decides - but say why in your study.';
       host.appendChild(p);
     }
+  }
+
+  /* Measured (contaminated) against corrected (clean oil) values. */
+  function mudTable(m) {
+    var wrap = document.createElement('div');
+    wrap.className = 'table-wrap mud-table';
+    var tbl = document.createElement('table');
+    var th = document.createElement('thead'), hr = document.createElement('tr');
+    ['Property', 'Contaminated sample', 'Clean oil'].forEach(function (t) { var h = document.createElement('th'); h.textContent = t; hr.appendChild(h); });
+    th.appendChild(hr); tbl.appendChild(th);
+    var f = function (x, g) { return x === null || x === undefined ? '–' : g(x); };
+    var lines = [
+      ['Bubble point (' + label('p') + ')', function (x) { return fmt('p', x); }, 'pb'],
+      ['Rsb (' + label('rs') + ')', function (x) { return fmt('rs', x); }, 'rsb'],
+      ['Bob (' + label('bo') + ')', function (x) { return x.toFixed(4); }, 'bob'],
+      ['Stock-tank oil (API)', function (x) { return x.toFixed(1); }, 'api'],
+      ['Dead-oil viscosity (' + label('mu') + ')', function (x) { return fmt('mu', x); }, 'muod']
+    ];
+    var tb = document.createElement('tbody');
+    lines.forEach(function (l) {
+      var tr = document.createElement('tr');
+      [l[0], f(m.before[l[2]], l[1]), f(m.after[l[2]], l[1])].forEach(function (t) { var td = document.createElement('td'); td.textContent = t; tr.appendChild(td); });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); wrap.appendChild(tbl);
+    return wrap;
   }
 
   function renderGasReportFinal(host, rep, q, fin) {
@@ -4033,8 +4171,701 @@
         /* the phase-diagram callout is measured with getBBox, which reads zero
            while its tab is hidden - place it again now that it is visible */
         if (model && cursorP !== null) setCursor(cursorP, 'tab');
+        if (t.id === 'tab-recovery' && recDirty) renderRecovery();
+        if (t.id === 'tab-samplecmp') renderSampleCmp();
+        if (t.id === 'tab-export' && model) renderReportOutline();
       });
     });
+  }
+
+
+  /* ================================================================
+   * Recovery: screening recovery factors from the PVT model
+   * ================================================================ */
+  var recInputs = (function () {
+    var o = null;
+    try { o = JSON.parse(localStorage.getItem('pvt.recovery')); } catch (e) { o = null; }
+    o = o && typeof o === 'object' ? o : {};
+    return { oil: Rec ? Rec.cleanInputs(o.oil) : {}, gas: Rec ? Rec.cleanInputs(o.gas) : {} };
+  })();
+  var recDirty = true, recLast = null;
+  function persistRecovery() {
+    try { localStorage.setItem('pvt.recovery', JSON.stringify(recInputs)); } catch (e) { /* ignore */ }
+  }
+  /* Rock inputs shown for each fluid, grouped. */
+  var REC_GROUPS = {
+    oil: [['Pressures', ['pi', 'pa', 'pw']], ['Rock', ['swi', 'cf']],
+          ['Relative permeability (Corey)', ['sgc', 'sorg', 'sorw', 'no', 'ng', 'now', 'nw', 'kroMax', 'krgMax', 'krwMax']],
+          ['Water drive', ['fwMax']], ['API cross-check only', ['phi', 'kmd']]],
+    gas: [['Pressures', ['pi', 'pa', 'pw']], ['Rock', ['swi', 'sgr']]]
+  };
+  function recShown(k) { var d = Rec.INPUTS[k]; return d.kind ? conv(d.kind, 1) !== 1 || true : true; }
+  function recDisp(k, v) {
+    var d = Rec.INPUTS[k];
+    if (v === null || v === undefined) return '';
+    if (d.kind === 'p') return fmt('p', v);
+    if (d.kind === 'c') return conv('c', v).toExponential(2);
+    return String(+(+v).toPrecision(4));
+  }
+  function recUnit(k) {
+    var d = Rec.INPUTS[k];
+    return d.kind ? label(d.kind) : d.frac ? 'fraction' : '';
+  }
+  function pct(x, d) { return x === null || x === undefined || !isFinite(x) ? '–' : (100 * x).toFixed(d === undefined ? 1 : d) + ' %'; }
+  function defBadge(isDef) {
+    var b = document.createElement('span');
+    b.className = 'def-badge' + (isDef ? '' : ' entered');
+    b.textContent = isDef ? 'default' : 'entered';
+    b.title = isDef ? 'Still at the typical default: enter your own value under Rock and economic inputs' : 'Your value';
+    return b;
+  }
+
+  function renderRecovery() {
+    var host = $('recoveryBody');
+    if (!host || !Rec) return;
+    if ($('panel-recovery').hidden) { recDirty = true; return; }
+    recDirty = false;
+    host.textContent = '';
+    if (!model) return;
+    var f = model.fluid, ent = recInputs[f];
+    var est;
+    try { est = Rec.estimate(model, ent); } catch (e) { host.appendChild(notice('error', '!', 'Recovery could not be estimated: ' + e.message)); return; }
+    recLast = est;
+
+    /* inputs */
+    var det = document.createElement('details');
+    det.className = 'rec-inputs';
+    var nEnt = Rec.ORDER.filter(function (k) { return ent[k] !== null && ent[k] !== undefined; }).length;
+    det.open = !!est.errors.length || nEnt > 0 && recInputsOpen !== false || recInputsOpen === true;
+    det.addEventListener('toggle', function () { recInputsOpen = det.open; });
+    var sm = document.createElement('summary');
+    sm.textContent = 'Rock and economic inputs';
+    var cnt = document.createElement('span');
+    cnt.className = 'def-badge' + (nEnt ? ' entered' : '');
+    cnt.textContent = nEnt ? nEnt + ' entered, the rest default' : 'all default';
+    sm.appendChild(cnt);
+    det.appendChild(sm);
+    var body = document.createElement('div');
+    body.className = 'rec-input-body';
+    var hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'Leave a box empty to use the typical default shown in grey. Saturations and porosity are fractions. ' +
+      'Every result below says which of these it uses and whether each is still a default.';
+    body.appendChild(hint);
+    var grid = document.createElement('div');
+    grid.className = 'rec-grid';
+    REC_GROUPS[f].forEach(function (g) {
+      var h = document.createElement('div'); h.className = 'rec-group'; h.textContent = g[0]; grid.appendChild(h);
+      g[1].forEach(function (k) {
+        var d = Rec.INPUTS[k], fd = document.createElement('div');
+        fd.className = 'field';
+        var lb = document.createElement('label');
+        lb.htmlFor = 'rec_' + k;
+        lb.textContent = d.label + ' ';
+        var u = document.createElement('span'); u.className = 'unit'; u.textContent = recUnit(k); lb.appendChild(u);
+        if (d.note) lb.title = d.note;
+        var inp = document.createElement('input');
+        inp.type = 'text'; inp.inputMode = 'decimal'; inp.id = 'rec_' + k;
+        inp.placeholder = recDisp(k, est.values[k]);
+        var e = ent[k];
+        if (e !== null && e !== undefined) { inp.value = recDisp(k, e); inp.classList.add('entered'); }
+        inp.addEventListener('change', function () {
+          var t = inp.value.trim().replace(',', '.');
+          if (t === '') ent[k] = null;
+          else {
+            var x = parseFloat(t);
+            if (!isFinite(x)) { inp.value = ''; ent[k] = null; }
+            else ent[k] = d.kind ? uu(d.kind).inv(x) : x;
+          }
+          persistRecovery();
+          renderRecovery();
+        });
+        fd.appendChild(lb); fd.appendChild(inp); grid.appendChild(fd);
+      });
+    });
+    body.appendChild(grid);
+    var reset = document.createElement('button');
+    reset.type = 'button'; reset.className = 'ghost'; reset.textContent = 'Reset all to defaults';
+    reset.style.marginTop = '8px';
+    reset.addEventListener('click', function () { recInputs[f] = Rec.cleanInputs({}); persistRecovery(); renderRecovery(); });
+    body.appendChild(reset);
+    det.appendChild(body);
+    host.appendChild(det);
+
+    if (est.errors.length) { est.errors.forEach(function (m) { host.appendChild(notice('error', '!', m)); }); return; }
+    if (model.tuning) host.appendChild(notice('info', 'i', 'Uses the tuned PVT model (laboratory data), as on the other tabs.'));
+
+    recSummary(host, est);
+    est.notes.forEach(function (n) { host.appendChild(notice('warn', '!', n)); });
+
+    var cg = document.createElement('div');
+    cg.className = 'chart-grid';
+    host.appendChild(cg);
+    if (f === 'oil') recOilCharts(cg, est); else recGasCharts(cg, est);
+
+    var bh = document.createElement('h3');
+    bh.className = 'screen-detail-head';
+    bh.textContent = 'Basis of each estimate';
+    host.appendChild(bh);
+    est.results.forEach(function (r) { host.appendChild(basisCard(r)); });
+
+    var dl = document.createElement('div');
+    dl.className = 'project-actions';
+    dl.style.maxWidth = '360px';
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = 'Download recovery curves (CSV)';
+    b.addEventListener('click', function () {
+      var name = ($('projectName').value.trim() || 'phasewiz').replace(/[^\w.-]+/g, '_') + '_recovery.csv';
+      saveFile(name, Rec.toCsv(est, 'Copyright (c) 2026 Ankaj Kumar Sinha - PolyForm Noncommercial License 1.0.0'), function () { /* nothing */ });
+    });
+    dl.appendChild(b);
+    host.appendChild(dl);
+  }
+  var recInputsOpen = null;
+  /* The estimate for the report: the one on screen when it is current. */
+  function recFresh(m) { return recLast && recLast.fluid === m.fluid && !recDirty ? recLast : null; }
+  function recoveryFor(m) {
+    if (recLast && recLast.fluid === m.fluid && !recDirty) return recLast;
+    try { return Rec.estimate(m, recInputs[m.fluid]); } catch (e) { return null; }
+  }
+
+  /* One bar per mechanism, with the band the default rock inputs span. */
+  var REC_COLOR = { expansion: 1, solutionGas: 2, water: 3, apiSg: 7, apiWd: 7, depletion: 2 };
+  var REC_SUB = {
+    expansion: 'oil, water and rock expansion, Pi to Pb',
+    solutionGas: 'Muskat tank, Pi to abandonment (includes the expansion)',
+    water: 'Buckley-Leverett, full sweep: × sweep for field recovery',
+    apiSg: 'Arps et al. (1967): indicative',
+    apiWd: 'Arps et al. (1967): indicative',
+    depletion: 'p/z material balance, Pi to abandonment'
+  };
+  function recSummary(host, est) {
+    var box = document.createElement('div');
+    box.className = 'rec-summary';
+    var h = document.createElement('h3'); h.textContent = 'Recovery by drive mechanism';
+    box.appendChild(h);
+    var sub = document.createElement('p'); sub.className = 'chart-sub';
+    sub.textContent = 'Bars: estimate. Shaded: the range when each rock input still at its default is moved across its typical range. ' +
+      'Water drive is a displacement efficiency (complete sweep), not a field recovery factor.';
+    sub.style.marginBottom = '6px';
+    box.appendChild(sub);
+    est.results.forEach(function (r) {
+      var row = document.createElement('div'); row.className = 'rec-row';
+      var nm = document.createElement('div'); nm.className = 'rec-name';
+      nm.textContent = r.title + ' ';
+      if (r.basis.usesDefaults) nm.appendChild(defBadge(true));
+      var sm = document.createElement('small');
+      sm.textContent = est.fluid === 'gas' && r.key === 'water' ? 'gas trapped behind the water at Sgr, full sweep' : REC_SUB[r.key] || '';
+      nm.appendChild(sm);
+      var tr = document.createElement('div'); tr.className = 'rec-track';
+      var c = 'rec-c' + (REC_COLOR[r.key] || 1);
+      if (r.band && r.band.hi > r.band.lo + 1e-4) {
+        var bd = document.createElement('div'); bd.className = 'rec-band ' + c;
+        bd.style.left = (100 * Math.max(0, r.band.lo)) + '%'; bd.style.width = (100 * (Math.min(1, r.band.hi) - Math.max(0, r.band.lo))) + '%';
+        bd.title = 'Range ' + pct(r.band.lo) + ' – ' + pct(r.band.hi);
+        tr.appendChild(bd);
+      }
+      if (r.rf !== null) {
+        var bar = document.createElement('div'); bar.className = 'rec-bar ' + c;
+        bar.style.width = (100 * Math.max(0, Math.min(1, r.rf))) + '%';
+        tr.appendChild(bar);
+      }
+      var val = document.createElement('div'); val.className = 'rec-val';
+      val.textContent = r.rf === null ? '–' : pct(r.rf);
+      var vs = document.createElement('small');
+      vs.textContent = r.rf === null ? (r.error ? 'not applicable' : '') : r.band && r.band.hi > r.band.lo + 1e-4 ? pct(r.band.lo, 0) + ' – ' + pct(r.band.hi, 0) : 'no default varied';
+      val.appendChild(vs);
+      row.appendChild(nm); row.appendChild(tr); row.appendChild(val);
+      box.appendChild(row);
+    });
+    var sc = document.createElement('div'); sc.className = 'rec-scale';
+    var a = document.createElement('span'), m = document.createElement('div'), z = document.createElement('span');
+    [0, 25, 50, 75, 100].forEach(function (t) { var q = document.createElement('span'); q.textContent = t + ' %'; m.appendChild(q); });
+    sc.appendChild(a); sc.appendChild(m); sc.appendChild(z);
+    box.appendChild(sc);
+    host.appendChild(box);
+  }
+
+  function recMarks(est) {
+    var v = est.values, out = [{ x: conv('p', v.pi), label: 'Pi' }];
+    if (model.fluid === 'oil' && model.pb < v.pi && model.pb > v.pa) out.push({ x: conv('p', model.pb), label: 'Pb' });
+    out.push({ x: conv('p', v.pa), label: 'Abandonment' });
+    return out;
+  }
+  function recOilCharts(cg, est) {
+    var pf = function (x) { return x.toFixed(uu('p').d) + ' ' + label('p'); };
+    var rfPts = est.expansion.curve.map(function (c) { return { x: conv('p', c.p), y: 100 * c.rf }; });
+    var mu = est.muskat.error ? [] : est.muskat.curve;
+    var muPts = mu.map(function (c) { return { x: conv('p', c.p), y: 100 * c.rf }; });
+    var bands = est.sens.curve ? [{ slot: 2, points: est.sens.curve.map(function (c) { return { x: conv('p', c.p), lo: 100 * c.lo, hi: 100 * c.hi }; }) }] : [];
+    chartInto(cg, 'rec-rf', { endLabels: false, title: 'Recovery factor against pressure', subtitle: 'Depletion from Pi: expansion to Pb, then solution-gas drive. Shaded: range over the default rock inputs',
+      xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Recovery (% of oil in place)', yMinZero: true, markers: recMarks(est), bands: bands,
+      series: [{ name: 'Expansion', slot: 1, points: rfPts.slice().reverse() }, { name: 'Solution-gas drive', slot: 2, points: muPts.slice().reverse() }],
+      fmtX: pf, fmtY: function (v) { return v.toFixed(1) + ' %'; } });
+    if (mu.length) {
+      chartInto(cg, 'rec-gor', { endLabels: false, title: 'Producing GOR against pressure', subtitle: 'Falls below Rs until gas reaches Sgc, then rises as free gas flows',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Gas-oil ratio (' + label('rs') + ')', yMinZero: true,
+        markers: est.muskat.pCritGas ? [{ x: conv('p', est.muskat.pCritGas), label: 'Sg = Sgc' }] : [],
+        series: [{ name: 'Producing GOR', slot: 2, points: mu.filter(function (c) { return isFinite(c.gor); }).map(function (c) { return { x: conv('p', c.p), y: conv('rs', c.gor) }; }).reverse() },
+                 { name: 'Solution GOR, Rs', slot: 1, dashed: true, points: mu.map(function (c) { return { x: conv('p', c.p), y: conv('rs', c.rs) }; }).reverse() }],
+        fmtX: pf, fmtY: function (v) { return v.toFixed(uu('rs').d) + ' ' + label('rs'); } });
+      chartInto(cg, 'rec-sat', { endLabels: false, title: 'Saturations against pressure', subtitle: 'Free gas grows below Pb; the tank stops at abandonment or Sorg',
+        xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Saturation (fraction)', yMinZero: true,
+        series: [{ name: 'Gas, Sg', slot: 2, points: mu.map(function (c) { return { x: conv('p', c.p), y: c.sg }; }).reverse() },
+                 { name: 'Oil, So', slot: 1, points: mu.map(function (c) { return { x: conv('p', c.p), y: c.so }; }).reverse() }],
+        fmtX: pf, fmtY: function (v) { return v.toFixed(3); } });
+    }
+    var wd = est.water;
+    chartInto(cg, 'rec-fw', { endLabels: false, title: 'Fractional flow of water', subtitle: 'μo ' + wd.muo.toFixed(3) + ' cp, μw ' + wd.muw.toFixed(3) +
+        ' cp at ' + fmt('p', wd.pw) + ' ' + label('p') + '. The Welge tangent marks the front',
+      xLabel: 'Water saturation (fraction)', yLabel: 'Water fraction flowing, fw', yMinZero: true,
+      markers: [{ x: wd.swf, label: 'Front Sw ' + wd.swf.toFixed(3) }],
+      series: [{ name: 'fw', slot: 3, points: wd.fwCurve.map(function (q) { return { x: q.sw, y: q.fw }; }) },
+               { name: 'Welge tangent', slot: 7, dashed: true, points: wd.tangent.map(function (q) { return { x: q.sw, y: q.fw }; }) }],
+      fmtX: function (v) { return 'Sw ' + v.toFixed(3); }, fmtY: function (v) { return v.toFixed(3); } });
+    chartInto(cg, 'rec-wc', { endLabels: false, title: 'Water cut against displacement efficiency', subtitle: 'Breakthrough at ' + pct(wd.edBt) + '; ' + pct(wd.ed) +
+        ' at ' + Math.round(100 * est.values.fwMax) + ' % water cut (complete sweep)',
+      xLabel: 'Displacement efficiency, Ed (%)', yLabel: 'Water cut (%)', yMinZero: true,
+      markers: [{ x: 100 * wd.ed, label: 'Economic limit' }],
+      series: [{ name: 'Water cut', slot: 3, points: wd.cut.map(function (q) { return { x: 100 * q.ed, y: 100 * q.fw }; }) }],
+      fmtX: function (v) { return 'Ed ' + v.toFixed(1) + ' %'; }, fmtY: function (v) { return v.toFixed(1) + ' %'; } });
+    recKrCharts(cg, est);
+  }
+  function recKrCharts(cg, est) {
+    var tag = function (keys) { return keys.some(function (k) { return est.isDefault[k]; }) ? ' (default Corey)' : ' (entered)'; };
+    chartInto(cg, 'rec-krgo', { endLabels: false, title: 'Gas-oil relative permeability' + tag(['sgc', 'sorg', 'no', 'ng', 'kroMax', 'krgMax']),
+      subtitle: 'Corey curves against gas saturation, with Swi present', xLabel: 'Gas saturation, Sg (fraction)', yLabel: 'kr', yMinZero: true,
+      series: [{ name: 'krg', slot: 2, points: est.kr.gasOil.map(function (q) { return { x: q.sg, y: q.krg }; }) },
+               { name: 'kro', slot: 1, points: est.kr.gasOil.map(function (q) { return { x: q.sg, y: q.kro }; }) }],
+      fmtX: function (v) { return 'Sg ' + v.toFixed(3); }, fmtY: function (v) { return v.toFixed(3); } });
+    chartInto(cg, 'rec-krwo', { endLabels: false, title: 'Water-oil relative permeability' + tag(['swi', 'sorw', 'now', 'nw', 'kroMax', 'krwMax']),
+      subtitle: 'Corey curves against water saturation', xLabel: 'Water saturation, Sw (fraction)', yLabel: 'kr', yMinZero: true,
+      series: [{ name: 'krw', slot: 3, points: est.kr.waterOil.map(function (q) { return { x: q.sw, y: q.krw }; }) },
+               { name: 'kro', slot: 1, points: est.kr.waterOil.map(function (q) { return { x: q.sw, y: q.kro }; }) }],
+      fmtX: function (v) { return 'Sw ' + v.toFixed(3); }, fmtY: function (v) { return v.toFixed(3); } });
+  }
+  function recGasCharts(cg, est) {
+    var d = est.depletion, pf = function (x) { return x.toFixed(uu('p').d) + ' ' + label('p'); };
+    chartInto(cg, 'rec-pz', { endLabels: false, title: 'p/z against gas recovered', subtitle: 'Volumetric depletion is a straight line on this plot; z from the PVT model',
+      xLabel: 'Gas recovered (% of gas in place)', yLabel: 'p/z (' + label('p') + ')', yMinZero: true,
+      markers: [{ x: 100 * d.rf, label: 'Abandonment ' + pct(d.rf) }],
+      series: [{ name: 'p/z', slot: 2, points: d.curve.map(function (c) { return { x: 100 * c.rf, y: conv('p', c.pz) }; }) }],
+      fmtX: function (v) { return v.toFixed(1) + ' % recovered'; }, fmtY: function (v) { return v.toFixed(uu('p').d) + ' ' + label('p'); } });
+    chartInto(cg, 'rec-grf', { endLabels: false, title: 'Recovery factor against pressure', subtitle: 'Volumetric depletion from Pi to abandonment',
+      xLabel: 'Pressure (' + label('p') + ')', yLabel: 'Recovery (% of gas in place)', yMinZero: true, markers: recMarks(est),
+      series: [{ name: 'Depletion', slot: 2, points: d.curve.map(function (c) { return { x: conv('p', c.p), y: 100 * c.rf }; }).reverse() }],
+      fmtX: pf, fmtY: function (v) { return v.toFixed(1) + ' %'; } });
+    chartInto(cg, 'rec-gz', { endLabels: false, title: 'Gas deviation factor over the depletion', subtitle: 'The z values the p/z line uses',
+      xLabel: 'Pressure (' + label('p') + ')', yLabel: 'z (–)',
+      series: [{ name: 'z', slot: 2, points: d.curve.map(function (c) { return { x: conv('p', c.p), y: c.z }; }).reverse() }],
+      fmtX: pf, fmtY: function (v) { return v.toFixed(4); } });
+  }
+
+  function basisCard(r) {
+    var b = r.basis, det = document.createElement('details');
+    det.className = 'basis-card';
+    var sm = document.createElement('summary');
+    var t = document.createElement('span'); t.textContent = r.title; t.style.fontWeight = '600';
+    var v = document.createElement('span'); v.className = 'basis-val'; v.textContent = r.rf === null ? '–' : pct(r.rf);
+    sm.appendChild(t); sm.appendChild(v);
+    sm.appendChild(defBadge(b.usesDefaults));
+    if (!b.usesDefaults) sm.lastChild.textContent = 'all entered';
+    det.appendChild(sm);
+    var body = document.createElement('div'); body.className = 'basis-body';
+    var ref = document.createElement('p'); ref.className = 'basis-ref';
+    ref.textContent = b.method + ' — ' + b.reference + (r.error ? '. ' + r.error : '');
+    body.appendChild(ref);
+    var c1 = document.createElement('div');
+    var h1 = document.createElement('h4'); h1.textContent = 'From the PVT model'; c1.appendChild(h1);
+    var dl1 = document.createElement('dl');
+    b.pvt.forEach(function (q) {
+      var dt = document.createElement('dt'); dt.textContent = q[0];
+      var dd = document.createElement('dd'); dd.textContent = q[1];
+      dl1.appendChild(dt); dl1.appendChild(dd);
+    });
+    c1.appendChild(dl1); body.appendChild(c1);
+    var c2 = document.createElement('div');
+    var h2 = document.createElement('h4'); h2.textContent = 'Rock and economic inputs'; c2.appendChild(h2);
+    var dl2 = document.createElement('dl');
+    b.rock.forEach(function (q) {
+      var dt = document.createElement('dt'); dt.textContent = q.label;
+      var dd = document.createElement('dd');
+      dd.textContent = recDisp(q.key, q.value) + (Rec.INPUTS[q.key].kind ? ' ' + label(Rec.INPUTS[q.key].kind) : '') + ' ';
+      dd.appendChild(defBadge(q.isDefault));
+      dl2.appendChild(dt); dl2.appendChild(dd);
+    });
+    c2.appendChild(dl2); body.appendChild(c2);
+    var c3 = document.createElement('div');
+    var h3 = document.createElement('h4'); h3.textContent = 'Assumptions'; c3.appendChild(h3);
+    var ul = document.createElement('ul');
+    b.assumptions.forEach(function (a) { var li = document.createElement('li'); li.textContent = a; ul.appendChild(li); });
+    c3.appendChild(ul); body.appendChild(c3);
+    det.appendChild(body);
+    return det;
+  }
+
+
+  /* ================================================================
+   * Samples tab: accepted PVT reports side by side
+   * ================================================================ */
+  var cmpOpts = (function () {
+    var o = null;
+    try { o = JSON.parse(localStorage.getItem('pvt.sampleCmp')); } catch (e) { o = null; }
+    o = o && typeof o === 'object' ? o : {};
+    return { unaccepted: !!o.unaccepted, failed: !!o.failed, logBars: !!o.logBars, hidden: Array.isArray(o.hidden) ? o.hidden : [] };
+  })();
+  var cmpEnv = {};          /* envelope cache: key -> envelope | null */
+  var cmpEnvBusy = false;
+  function persistCmp() { try { localStorage.setItem('pvt.sampleCmp', JSON.stringify(cmpOpts)); } catch (e) { /* ignore */ } }
+  function slotOf(i) { return (i % 8) + 1; }
+
+  function renderSampleCmp() {
+    var host = $('sampleCmpBody');
+    if (!host || !Cmp) return;
+    if ($('panel-samplecmp').hidden) return;
+    host.textContent = '';
+    var res = Cmp.collect(reports.list, reportQc, { fluid: fluid, unaccepted: cmpOpts.unaccepted, failed: cmpOpts.failed });
+    /* controls */
+    var ctl = document.createElement('div'); ctl.className = 'cmp-controls';
+    [['unaccepted', 'Include reports not yet accepted'], ['failed', 'Include reports that fail QC']].forEach(function (q) {
+      var l = document.createElement('label'); l.className = 'switch';
+      var c = document.createElement('input'); c.type = 'checkbox'; c.checked = cmpOpts[q[0]];
+      c.addEventListener('change', function () { cmpOpts[q[0]] = c.checked; persistCmp(); renderSampleCmp(); });
+      l.appendChild(c); l.appendChild(document.createTextNode(' ' + q[1]));
+      ctl.appendChild(l);
+    });
+    host.appendChild(ctl);
+    if (res.excluded.length) {
+      host.appendChild(notice('info', 'i', 'Not shown: ' + res.excluded.map(function (x) { return x.name + ' (' + x.why + ')'; }).join('; ') + '.'));
+    }
+    if (!res.samples.length) {
+      host.appendChild(notice('warn', '!', 'No ' + (fluid === 'gas' ? 'gas' : 'oil') + ' reports to compare yet. Enter or import reports on the PVT reports & QC tab and accept the good ones in step 3' +
+        (reports.list.length ? ', or tick the boxes above.' : '.')));
+      return;
+    }
+    /* sample chips: colour key and show / hide */
+    res.samples.forEach(function (s, i) { s.slot = slotOf(i); });
+    var chips = document.createElement('div'); chips.className = 'cmp-chips';
+    res.samples.forEach(function (s) {
+      var b = document.createElement('button'); b.type = 'button';
+      var off = cmpOpts.hidden.indexOf(s.id) >= 0;
+      b.className = 'chip' + (off ? ' off' : ' on');
+      b.title = (off ? 'Show ' : 'Hide ') + s.name;
+      var sw = document.createElement('span'); sw.className = 'cmp-swatch slot-' + s.slot; b.appendChild(sw);
+      var dot = document.createElement('span'); dot.className = 'qc-dot ' + s.status;
+      dot.textContent = s.status === 'pass' ? '✓' : s.status === 'warn' ? '!' : s.status === 'fail' ? '✕' : '–';
+      dot.title = 'QC: ' + s.status + (s.accepted ? ', accepted' : ', not accepted yet');
+      b.appendChild(dot);
+      b.appendChild(document.createTextNode(s.name + (s.accepted ? '' : ' (not accepted)')));
+      b.addEventListener('click', function () {
+        var k = cmpOpts.hidden.indexOf(s.id);
+        if (k >= 0) cmpOpts.hidden.splice(k, 1); else cmpOpts.hidden.push(s.id);
+        persistCmp(); renderSampleCmp();
+      });
+      chips.appendChild(b);
+    });
+    host.appendChild(chips);
+    var S = res.samples.filter(function (s) { return cmpOpts.hidden.indexOf(s.id) < 0; });
+    if (!S.length) { host.appendChild(notice('info', 'i', 'All samples are hidden: click a sample above to show it.')); return; }
+    var gas = fluid === 'gas';
+
+    /* 1. compositions */
+    cmpHead(host, '1. Compositions', 'Reservoir-fluid composition, mol %' + (gas ? '' : ' (recombined or bottomhole)'));
+    var withComp = S.filter(function (s) { return s.composition; });
+    if (withComp.length) {
+      var lg = document.createElement('label'); lg.className = 'switch'; lg.style.marginBottom = '6px';
+      var lc = document.createElement('input'); lc.type = 'checkbox'; lc.checked = cmpOpts.logBars;
+      lc.addEventListener('change', function () { cmpOpts.logBars = lc.checked; persistCmp(); renderSampleCmp(); });
+      lg.appendChild(lc); lg.appendChild(document.createTextNode(' Logarithmic scale (shows the small components)'));
+      host.appendChild(lg);
+      host.appendChild(compBars(withComp, res.components, cmpOpts.logBars));
+    } else host.appendChild(notice('info', 'i', 'None of these reports has a composition.'));
+    var grid1 = document.createElement('div'); grid1.className = 'chart-grid cmp-charts'; host.appendChild(grid1);
+    var scn = S.filter(function (s) { return s.scn; });
+    if (scn.length && Mud) {
+      chartInto(grid1, 'cmp-scn', { title: 'Stock-tank oil by carbon number', subtitle: 'From the mud-contamination test of each report; a clean oil falls on a straight line',
+        xLabel: 'Carbon number', yLabel: 'log₁₀ (mol %)', endLabels: false,
+        series: scn.map(function (s) {
+          var Z = s.scn.reduce(function (a, q) { return a + q.w / Mud.mwOf(q.n); }, 0);
+          return { name: s.name, slot: s.slot, points: s.scn.slice(0, -1).map(function (q) { return { x: q.n, y: Math.log(100 * q.w / Mud.mwOf(q.n) / Z) / Math.LN10 }; }) };
+        }),
+        fmtX: function (v) { return 'C' + Math.round(v); }, fmtY: function (v) { return Number(Math.pow(10, v).toPrecision(3)) + ' mol %'; } });
+    }
+    if (withComp.length) {
+      chartInto(grid1, 'cmp-c7', { title: 'C1 against C7+', subtitle: 'Lighter fluids sit to the upper left; samples of one fluid should cluster',
+        xLabel: 'C7+ (mol %)', yLabel: 'C1 (mol %)', endLabels: false,
+        series: withComp.map(function (s) { return { name: s.name, slot: s.slot, scatter: true, points: [{ x: s.composition.z['C7+'], y: s.composition.z.C1 }] }; }),
+        fmtX: function (v) { return v.toFixed(2); }, fmtY: function (v) { return v.toFixed(2); } });
+    }
+
+    /* 2. key properties */
+    cmpHead(host, '2. Key properties', 'From each report\'s finalised data' + (gas ? '' : ' (corrected for mud contamination where that test is entered)'));
+    host.appendChild(cmpTable(S, gas));
+
+    /* 3. overlays against pressure */
+    cmpHead(host, '3. Finalised data against pressure', 'Linked to the pressure cursor like the other charts');
+    var grid3 = document.createElement('div'); grid3.className = 'chart-grid cmp-charts'; host.appendChild(grid3);
+    var defs = gas ? [['z', 'Gas deviation factor', null], ['mug', 'Gas viscosity', 'mu'], ['bg', 'Gas FVF', 'bg']]
+                   : [['rs', 'Solution gas-oil ratio', 'rs'], ['bo', 'Oil formation volume factor', 'bo'], ['muo', 'Oil viscosity', 'mu'], ['z', 'Gas deviation factor', null]];
+    defs.forEach(function (d) {
+      var ser = S.map(function (s) {
+        return { name: s.name, slot: s.slot, points: s.rows.filter(function (r) { return r[d[0]] !== null && r[d[0]] !== undefined && isFinite(r[d[0]]); })
+          .map(function (r) { return { x: conv('p', r.p), y: d[2] ? kindConv(d[2], r[d[0]]) : r[d[0]] }; }) };
+      }).filter(function (q) { return q.points.length; });
+      if (!ser.length) return;
+      chartInto(grid3, 'cmp-' + d[0], { title: d[1], subtitle: ser.length + ' sample' + (ser.length > 1 ? 's' : ''), xLabel: 'Pressure (' + label('p') + ')',
+        yLabel: d[2] ? kindLabel(d[2]) : 'z (–)', series: ser, endLabels: false, xUnit: label('p'),
+        onCursor: function (x) { setCursor(uu('p').inv(x), 'chart'); },
+        fmtX: function (v) { return v.toFixed(uu('p').d); },
+        fmtY: function (v) { var dg = d[2] ? kindDigits(d[2]) : 4; return dg < 0 ? v.toExponential(3) : v.toFixed(dg); } });
+    });
+
+    /* 4. phase envelopes */
+    cmpHead(host, '4. Phase envelopes', 'Peng-Robinson from each composition' + (gas ? '' : ', C1-C7+ interaction matched to the report\'s bubble point') +
+      '; dots mark reservoir temperature and pressure');
+    var envHost = document.createElement('div'); envHost.className = 'chart-grid cmp-charts'; host.appendChild(envHost);
+    cmpEnvelopes(envHost, withComp, gas);
+
+    /* 5. trends */
+    cmpHead(host, '5. Trends with depth and with each other', 'Dashed: least-squares line through the samples shown; a sample far off it is flagged under the chart');
+    var grid5 = document.createElement('div'); grid5.className = 'chart-grid cmp-charts'; host.appendChild(grid5);
+    var tdefs = gas
+      ? [['depth', 'cgr', 'CGR against depth', 'Depth (ft)', 'CGR (STB/MMscf)'], ['depth', 'c1', 'Methane against depth', 'Depth (ft)', 'C1 (mol %)'],
+         ['depth', 'gammaG', 'Separator-gas gravity against depth', 'Depth (ft)', 'Gas gravity (air = 1)']]
+      : [['depth', 'pb', 'Bubble point against depth', 'Depth (ft)', 'Pb (' + label('p') + ')'], ['depth', 'rsb', 'Rsb against depth', 'Depth (ft)', 'Rsb (' + label('rs') + ')'],
+         ['rsb', 'pb', 'Bubble point against Rsb', 'Rsb (' + label('rs') + ')', 'Pb (' + label('p') + ')'], ['depth', 'api', 'Oil gravity against depth', 'Depth (ft)', 'API']];
+    tdefs.forEach(function (t) { cmpTrend(grid5, S, t, gas); });
+  }
+
+  function cmpHead(host, title, sub) {
+    var d = document.createElement('div'); d.className = 'cmp-section';
+    var h = document.createElement('h3'); h.textContent = title; d.appendChild(h);
+    var p = document.createElement('p'); p.className = 'hint'; p.textContent = sub; d.appendChild(p);
+    host.appendChild(d);
+  }
+
+  /* Grouped bars: one group per component, one bar per sample. */
+  function compBars(S, comps, logScale) {
+    var box = document.createElement('div'); box.className = 'cmp-bars chart';
+    var head = document.createElement('div'); head.className = 'chart-head';
+    var h = document.createElement('h3'); h.textContent = 'Composition by component'; head.appendChild(h);
+    var sub = document.createElement('p'); sub.className = 'chart-sub'; sub.textContent = 'mol %, normalised to 100' + (logScale ? ', logarithmic scale' : ''); head.appendChild(sub);
+    box.appendChild(head);
+    var plot = document.createElement('div'); plot.className = 'chart-plot'; box.appendChild(plot);
+    var W = 900, Hh = 280, ML = 52, MR = 12, MT = 14, MB = 34, n = comps.length, k = S.length;
+    var NS = 'http://www.w3.org/2000/svg', mk = function (t, a) { var e = document.createElementNS(NS, t); for (var q in a) e.setAttribute(q, a[q]); return e; };
+    var svg = mk('svg', { viewBox: '0 0 ' + W + ' ' + Hh, role: 'img', 'aria-label': 'Composition by component for ' + k + ' samples' });
+    var vmax = 0, vmin = Infinity;
+    S.forEach(function (s) { comps.forEach(function (c) { var v = s.composition.z[c]; if (v > vmax) vmax = v; if (v > 0 && v < vmin) vmin = v; }); });
+    var lo = logScale ? Math.pow(10, Math.floor(Math.log(Math.max(vmin, 1e-3)) / Math.LN10)) : 0;
+    var hi = logScale ? Math.pow(10, Math.ceil(Math.log(vmax) / Math.LN10)) : Math.ceil(vmax / 10) * 10;
+    var y = function (v) {
+      var f = logScale ? (Math.log(Math.max(v, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) : v / hi;
+      return MT + (Hh - MT - MB) * (1 - f);
+    };
+    var ticks = [];
+    if (logScale) for (var t = lo; t <= hi * 1.0001; t *= 10) ticks.push(t);
+    else for (var t2 = 0; t2 <= hi + 1e-9; t2 += hi / 5) ticks.push(t2);
+    ticks.forEach(function (t3) {
+      svg.appendChild(mk('line', { class: 'grid', x1: ML, x2: W - MR, y1: y(t3), y2: y(t3) }));
+      var tx = mk('text', { class: 'tick', x: ML - 6, y: y(t3) + 4, 'text-anchor': 'end' });
+      tx.textContent = logScale ? String(t3 < 1 ? +t3.toPrecision(1) : t3) : String(+t3.toFixed(1));
+      svg.appendChild(tx);
+    });
+    var gw = (W - ML - MR) / n, bw = Math.max(2, Math.min(18, (gw - 8) / k));
+    var tip = document.createElement('div'); tip.className = 'chart-tip'; tip.hidden = true;
+    comps.forEach(function (c, i) {
+      var gx = ML + gw * i + (gw - bw * k) / 2;
+      S.forEach(function (s, j) {
+        var v = s.composition.z[c];
+        var r = mk('rect', { class: 'cmp-bar slot-' + s.slot, x: gx + j * bw, width: Math.max(1, bw - 1), y: y(v), height: Math.max(0, y(logScale ? lo : 0) - y(v)) });
+        r.addEventListener('pointerenter', function () {
+          tip.textContent = '';
+          var hd = document.createElement('div'); hd.className = 'tip-head'; hd.textContent = c; tip.appendChild(hd);
+          S.forEach(function (s2) {
+            var row = document.createElement('div'); row.className = 'tip-row';
+            var key = document.createElement('span'); key.className = 'cmp-swatch slot-' + s2.slot; row.appendChild(key);
+            var st = document.createElement('strong'); st.textContent = s2.composition.z[c].toFixed(3) + ' %'; row.appendChild(st);
+            var nm = document.createElement('span'); nm.className = 'tip-name'; nm.textContent = s2.name; row.appendChild(nm);
+            tip.appendChild(row);
+          });
+          var px = (gx / W) * plot.clientWidth;
+          tip.style.left = Math.max(4, Math.min(plot.clientWidth - 200, px + 10)) + 'px'; tip.style.top = '8px';
+          tip.hidden = false;
+        });
+        r.addEventListener('pointerleave', function () { tip.hidden = true; });
+        svg.appendChild(r);
+      });
+      var lb = mk('text', { class: 'tick', x: ML + gw * (i + 0.5), y: Hh - MB + 16, 'text-anchor': 'middle' });
+      lb.textContent = c; svg.appendChild(lb);
+    });
+    svg.appendChild(mk('line', { class: 'axis', x1: ML, x2: W - MR, y1: y(logScale ? lo : 0), y2: y(logScale ? lo : 0) }));
+    var yl = mk('text', { class: 'axis-label', x: 12, y: MT + (Hh - MT - MB) / 2, 'text-anchor': 'middle', transform: 'rotate(-90 12 ' + (MT + (Hh - MT - MB) / 2) + ')' });
+    yl.textContent = 'mol %'; svg.appendChild(yl);
+    plot.appendChild(svg); plot.appendChild(tip);
+    var leg = document.createElement('ul'); leg.className = 'legend';
+    S.forEach(function (s) {
+      var li = document.createElement('li');
+      var sw = document.createElement('span'); sw.className = 'cmp-swatch slot-' + s.slot; li.appendChild(sw);
+      li.appendChild(document.createTextNode(s.name)); leg.appendChild(li);
+    });
+    box.appendChild(leg);
+    return box;
+  }
+
+  function cmpTable(S, gas) {
+    var cols = gas
+      ? [['Depth', 'len', function (s) { return s.depth; }], ['P res', 'p', function (s) { return s.pRes; }], ['T res', 'T', function (s) { return s.tempF; }],
+         ['Gas gravity', null, function (s) { return s.props.gammaG; }, 3], ['CGR', 'cgr', function (s) { return s.props.cgr; }],
+         ['Condensate API', null, function (s) { return s.props.apiC; }, 1], ['z at P res', null, function (s) { return s.props.zRes; }, 4],
+         ['μg at P res', 'mu', function (s) { return s.props.mugRes; }], ['C1 mol %', null, function (s) { return s.composition ? s.composition.z.C1 : null; }, 2],
+         ['C7+ mol %', null, function (s) { return s.composition ? s.composition.z['C7+'] : null; }, 2],
+         ['C7+ MW', null, function (s) { return s.props.mw7; }, 0], ['C7+ SG', null, function (s) { return s.props.sg7; }, 3]]
+      : [['Depth', 'len', function (s) { return s.depth; }], ['P res', 'p', function (s) { return s.pRes; }], ['T res', 'T', function (s) { return s.tempF; }],
+         ['Pb', 'p', function (s) { return s.props.pb; }], ['Rsb', 'rs', function (s) { return s.props.rsb; }], ['API', null, function (s) { return s.props.api; }, 1],
+         ['Bob', 'bo', function (s) { return s.props.bob; }], ['μob', 'mu', function (s) { return s.props.muob; }], ['μod', 'mu', function (s) { return s.props.muod; }],
+         ['Gas gravity', null, function (s) { return s.props.gammaG; }, 3],
+         ['C1 mol %', null, function (s) { return s.composition ? s.composition.z.C1 : null; }, 2],
+         ['C7+ mol %', null, function (s) { return s.composition ? s.composition.z['C7+'] : null; }, 2],
+         ['C7+ MW', null, function (s) { return s.props.mw7; }, 0], ['C7+ SG', null, function (s) { return s.props.sg7; }, 3],
+         ['Mud filtrate', null, function (s) { return s.props.mudPct; }, 1, 'wt %']];
+    var wrap = document.createElement('div'); wrap.className = 'table-wrap'; wrap.style.marginBottom = '6px';
+    var tbl = document.createElement('table'); tbl.className = 'cmp-table';
+    var thd = document.createElement('thead'), hr = document.createElement('tr');
+    var th0 = document.createElement('th'); th0.textContent = 'Sample'; hr.appendChild(th0);
+    var thq = document.createElement('th'); thq.textContent = 'QC'; hr.appendChild(thq);
+    cols.forEach(function (c) { var th = document.createElement('th'); th.textContent = c[0] + (c[1] ? ' (' + label(c[1]) + ')' : c[4] ? ' (' + c[4] + ')' : ''); hr.appendChild(th); });
+    thd.appendChild(hr); tbl.appendChild(thd);
+    var tb = document.createElement('tbody');
+    S.forEach(function (s) {
+      var tr = document.createElement('tr');
+      var td0 = document.createElement('td');
+      var sw = document.createElement('span'); sw.className = 'cmp-swatch slot-' + s.slot; sw.style.marginRight = '6px'; td0.appendChild(sw);
+      td0.appendChild(document.createTextNode(s.name)); tr.appendChild(td0);
+      var tq = document.createElement('td'); tq.textContent = s.status + (s.accepted ? '' : ' (not accepted)'); tr.appendChild(tq);
+      cols.forEach(function (c) {
+        var td = document.createElement('td'), v = c[2](s);
+        td.textContent = v === null || v === undefined || !isFinite(v) ? '–' : c[1] ? fmt(c[1], v) : v.toFixed(c[3] === undefined ? 2 : c[3]);
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  /* Envelopes are a few hundred ms each: computed one at a time after the
+     tab draws, cached by composition, and the chart redrawn as they land. */
+  function cmpEnvKey(s) { return JSON.stringify([s.fluid, s.composition, s.tempF, s.props.pb || null, s.id]); }
+  function cmpEnvelopes(host, S, gas) {
+    if (!Eos || !S.length) { host.appendChild(notice('info', 'i', 'Phase envelopes need a composition with the C7+ MW and SG.')); return; }
+    var rep = function (s) { return repById(s.id); };
+    var ready = [], pending = [];
+    S.forEach(function (s) {
+      var r = rep(s), comp = r && repApi(r).eosComposition(r);
+      if (!comp) return;
+      var k = cmpEnvKey(s);
+      if (k in cmpEnv) { if (cmpEnv[k]) ready.push({ s: s, e: cmpEnv[k] }); }
+      else pending.push({ s: s, comp: comp, k: k });
+    });
+    if (ready.length) {
+      var ser = [];
+      ready.forEach(function (o) {
+        var e = o.e, pts = e.bubble.concat(e.dew.slice(1)).map(function (q) { return { x: conv('T', q.t), y: conv('p', q.p) }; });
+        ser.push({ name: o.s.name, slot: o.s.slot, points: pts });
+        if (o.s.tempF !== null && o.s.pRes !== null) ser.push({ name: o.s.name + ' reservoir', slot: o.s.slot, scatter: true, legend: false, points: [{ x: conv('T', o.s.tempF), y: conv('p', o.s.pRes) }] });
+      });
+      chartInto(host, 'cmp-env', { title: 'Phase envelopes', subtitle: ready.length + ' of ' + (ready.length + pending.length) + ' computed' + (pending.length ? ', the rest follow' : ''),
+        xLabel: 'Temperature (' + label('T') + ')', yLabel: 'Pressure (' + label('p') + ')', series: ser, endLabels: false, yMinZero: true,
+        fmtX: function (v) { return v.toFixed(0) + ' ' + label('T'); }, fmtY: function (v) { return v.toFixed(uu('p').d) + ' ' + label('p'); } });
+    } else if (pending.length) {
+      host.appendChild(notice('info', 'i', 'Computing ' + pending.length + ' phase envelope' + (pending.length > 1 ? 's' : '') + '…'));
+    } else host.appendChild(notice('info', 'i', 'Phase envelopes need a composition with the C7+ MW and SG.'));
+    if (pending.length && !cmpEnvBusy) {
+      cmpEnvBusy = true;
+      setTimeout(function () {
+        var o = pending[0];
+        cmpEnv[o.k] = cmpEnvCompute(o.s, o.comp);
+        cmpEnvBusy = false;
+        if (!$('panel-samplecmp').hidden) renderSampleCmp();
+      }, 30);
+    }
+  }
+
+  function cmpEnvCompute(s, comp) {
+    var env = null;
+    try {
+      if (s.fluid === 'oil') {
+        var mt = s.props.pb ? Eos.matchPb(comp, s.tempF, s.props.pb) : null;
+        var mx = Eos.mixture(Object.assign({}, comp, mt && mt.kPlus !== undefined ? { kPlus: mt.kPlus } : {}));
+        env = mx && Eos.envelope(mx, { tMin: 0, pMax: 12000 });
+      } else {
+        var mg = Eos.mixture(comp);
+        env = mg && Eos.envelope(mg, { pMax: 10000 });
+      }
+    } catch (e) { env = null; }
+    return env && env.bubble && env.dew ? env : null;
+  }
+
+  /* The comparison for the PDF: the samples the Samples tab shows (same
+     ticks, same hidden samples, same colours), with their envelopes -
+     computed now if the tab has not done so yet. */
+  var SLOT_HEX = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+  function cmpForReport() {
+    if (!Cmp || effectiveMode() === 'none') return null;
+    var res = Cmp.collect(reports.list, reportQc, { fluid: fluid, unaccepted: cmpOpts.unaccepted, failed: cmpOpts.failed });
+    res.samples.forEach(function (s, i) { s.color = SLOT_HEX[i % 8]; });
+    res.samples = res.samples.filter(function (s) { return cmpOpts.hidden.indexOf(s.id) < 0; });
+    if (!res.samples.length) return null;
+    res.opts = { unaccepted: cmpOpts.unaccepted, failed: cmpOpts.failed };
+    res.envelopes = [];
+    if (Eos) res.samples.forEach(function (s) {
+      if (!s.composition) return;
+      var r = repById(s.id), comp = r && repApi(r).eosComposition(r);
+      if (!comp) return;
+      var k = cmpEnvKey(s);
+      if (!(k in cmpEnv)) cmpEnv[k] = cmpEnvCompute(s, comp);
+      var e = cmpEnv[k];
+      if (!e) return;
+      res.envelopes.push({ name: s.name, color: s.color, points: e.bubble.concat(e.dew.slice(1)),
+                           res: s.tempF !== null && s.pRes !== null ? { t: s.tempF, p: s.pRes } : null });
+    });
+    return res;
+  }
+
+  function cmpVal(s, key) {
+    if (key === 'depth') return s.depth;
+    if (key === 'c1') return s.composition ? s.composition.z.C1 : null;
+    return s.props[key] !== undefined ? s.props[key] : null;
+  }
+  function cmpConv(key, v) {
+    if (v === null) return null;
+    if (key === 'depth') return v;
+    if (key === 'pb') return conv('p', v);
+    if (key === 'rsb') return conv('rs', v);
+    if (key === 'cgr') return conv('cgr', v);
+    return v;
+  }
+  function cmpTrend(grid, S, t, gas) {
+    var pts = S.map(function (s) { return { s: s, x: cmpConv(t[0], cmpVal(s, t[0])), y: cmpConv(t[1], cmpVal(s, t[1])) }; })
+      .filter(function (q) { return q.x !== null && q.y !== null && isFinite(q.x) && isFinite(q.y); });
+    if (!pts.length) return;
+    var ser = pts.map(function (q) { return { name: q.s.name, slot: q.s.slot, scatter: true, points: [{ x: q.x, y: q.y }] }; });
+    var tr = Cmp.trend(pts), flag = [];
+    if (tr) {
+      var xs = pts.map(function (q) { return q.x; }), x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+      ser.unshift({ name: 'Trend (R² ' + tr.r2.toFixed(2) + ')', slot: 7, dashed: true, points: [{ x: x0, y: tr.a + tr.b * x0 }, { x: x1, y: tr.a + tr.b * x1 }] });
+      if (pts.length >= 4) pts.forEach(function (q, i) { if (Math.abs(tr.resid[i]) > 2 * tr.sd) flag.push(q.s.name); });
+    }
+    var wrap = document.createElement('div'); grid.appendChild(wrap);
+    var dk = t[0] === 'depth' ? 'len' : null;
+    chartInto(wrap, 'cmp-t-' + t[0] + '-' + t[1], { title: t[2], subtitle: pts.length < 3 ? 'A trend line needs three samples' : flag.length ? 'Off the trend: ' + flag.join(', ') : 'No sample is more than two standard deviations off the line',
+      xLabel: t[0] === 'depth' ? 'Depth (' + label('len') + ')' : t[3], yLabel: t[4], series: ser, endLabels: false,
+      fmtX: function (v) { return v.toFixed(0); }, fmtY: function (v) { return v.toFixed(t[1] === 'gammaG' ? 3 : t[1] === 'api' || t[1] === 'c1' ? 1 : 0); } });
+    if (dk) { /* depth is stored in ft; show the chosen unit */
+      ser.forEach(function (q) { q.points.forEach(function (p) { p.x = conv('len', p.x); }); });
+      charts['cmp-t-' + t[0] + '-' + t[1]].update(charts['cmp-t-' + t[0] + '-' + t[1]].opts);
+    }
   }
 
   /* ---------------- wiring ---------------- */
@@ -4086,7 +4917,7 @@
     $('btnDownload').addEventListener('click', download);
     $('btnPdf').addEventListener('click', downloadReport);
     restoreReportOpts();
-    ['pdfTitle', 'pdfAuthor', 'pdfUnits', 'pdfPlots', 'pdfCalcs', 'pdfMethod'].forEach(function (id) {
+    ['pdfTitle', 'pdfAuthor', 'pdfUnits', 'pdfPlots', 'pdfCalcs', 'pdfMethod', 'pdfRecovery', 'pdfSamples'].forEach(function (id) {
       $(id).addEventListener(/^pdf(Title|Author)$/.test(id) ? 'input' : 'change', function () {
         saveReportOpts();
         renderReportOutline();
