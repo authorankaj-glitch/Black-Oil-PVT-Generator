@@ -21,6 +21,8 @@
  *     reports:  { list, pick, envSource }  raw PVT reports (oil and gas), and the report
  *               whose composition draws each fluid's phase envelope - optional;
  *               files saved before reports existed open with none
+ *     recovery: { oil, gas }  rock inputs of the Recovery tab (null = default);
+ *               files saved before 1.8.0 open with all defaults
  *   }
  *
  * Reading a file checks its kind and version and fills anything missing
@@ -66,8 +68,23 @@
       inputs: inputs,
       lab: state.lab || null,
       samples: state.samples || { list: [], fieldTune: false },
-      reports: state.reports && Array.isArray(state.reports.list) ? state.reports : { list: [], pick: null }
+      reports: state.reports && Array.isArray(state.reports.list) ? state.reports : { list: [], pick: null },
+      recovery: recoveryOf(state.recovery)
     };
+  }
+
+  /* Recovery rock inputs per fluid: numbers or null (null = default). */
+  function recoveryOf(r) {
+    var out = { oil: {}, gas: {} };
+    if (!isObj(r)) return out;
+    ['oil', 'gas'].forEach(function (f) {
+      if (!isObj(r[f])) return;
+      Object.keys(r[f]).forEach(function (k) {
+        var v = r[f][k];
+        if (/^[a-zA-Z]{1,8}$/.test(k)) out[f][k] = typeof v === 'number' && isFinite(v) ? v : null;
+      });
+    });
+    return out;
   }
 
   /* Read a project file. Throws an Error that says what is wrong. */
@@ -101,7 +118,8 @@
       name: String(o.name || ''), savedAt: o.savedAt || null, fluid: fluid,
       units: pick(o.units, ['field', 'metric'], 'field'),
       labMode: pick(o.labMode, ['none', 'one', 'several'], 'none'),
-      inputs: inputs, lab: lab, samples: samples, reports: reports
+      inputs: inputs, lab: lab, samples: samples, reports: reports,
+      recovery: recoveryOf(o.recovery)
     };
   }
 

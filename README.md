@@ -127,6 +127,16 @@ require('fs').writeFileSync('report.pdf', Rep.build(m, { project: 'Field X', uni
 
 ## What's new
 
+**1.8.0 (2026-11-22)** &mdash; a **Recovery** tab: screening recovery factors from
+the PVT model (expansion, Muskat solution-gas drive, Buckley&ndash;Leverett water
+drive, gas p/z and trapped gas, API cross-check) with default rock properties
+you can override, sensitivity bands and the basis of every number; plus
+**oil-based mud contamination** on the PVT reports & QC tab (skimming and
+subtraction, with Rs, Bo, API, viscosity and the bubble point taken back to the
+clean oil before tuning). A **Samples** tab compares the accepted PVT
+reports side by side (compositions, key properties, curves, phase envelopes,
+depth trends), and charts against pressure now track together across tabs.
+
 **1.7.2 (2026-11-05)** &mdash; the PDF report footer no longer runs into the
 page number.
 
@@ -163,7 +173,7 @@ in a report.
 node pvt/tests/run-tests.js
 ```
 
-280 checks: reference values for every correlation, the physical invariants a
+336 checks: reference values for every correlation, the physical invariants a
 simulator depends on, cross-agreement between the z-factor fits, deck structure
 and unit conversions for each export format, a sweep of 849 fluid/correlation
 combinations, and the gas-reservoir model (recombination, separator-basis
@@ -174,7 +184,9 @@ deck headers), the several-report screening (each fault in a synthetic field
 caught by the right check, depth trends, overrides, field-wide multipliers
 recovered), the PVT report reader and QC (faults planted in example reports
 caught, the separator correction, spreadsheet-saved CSV files, the
-Peng&ndash;Robinson bubble point) and project files.
+Peng&ndash;Robinson bubble point), the mud-contamination estimates and
+corrections (a known filtrate share recovered from synthetic data by both
+methods) and project files.
 
 ## Deployment
 
